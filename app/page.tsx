@@ -1,65 +1,145 @@
-import Image from "next/image";
+import Link from "next/link";
+import type { DailySnapshot, MLBGame } from "@/types/mlb";
+import { Badge } from "@/components/ui/badge";
+import { Card, CardContent, CardHeader } from "@/components/ui/card";
 
-export default function Home() {
+async function getSnapshot(): Promise<DailySnapshot | null> {
+  try {
+    const base = process.env.URL ?? "http://localhost:3000";
+    const res = await fetch(`${base}/api/mlb`, { cache: "no-store" });
+    if (!res.ok) return null;
+    return res.json();
+  } catch {
+    return null;
+  }
+}
+
+function parkLabel(factor: number) {
+  if (factor >= 1.10) return { label: "Very Hitter Friendly", color: "bg-green-500/90 text-white" };
+  if (factor >= 1.04) return { label: "Hitter Friendly", color: "bg-green-600/80 text-white" };
+  if (factor <= 0.92) return { label: "Pitcher Friendly", color: "bg-red-500/80 text-white" };
+  if (factor <= 0.96) return { label: "Slight Pitcher", color: "bg-orange-500/80 text-white" };
+  return { label: "Neutral", color: "bg-muted text-muted-foreground" };
+}
+
+function GameCard({ game }: { game: MLBGame }) {
+  const park = parkLabel(game.parkFactor);
+  const gameTime = new Date(game.gameDate).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+    timeZoneName: "short",
+  });
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+    <Link href={`/game/${game.gamePk}`}>
+      <Card className="hover:border-primary/50 hover:shadow-md transition-all cursor-pointer group h-full">
+        <CardHeader className="pb-3">
+          <div className="flex items-center justify-between">
+            <span className="text-xs text-muted-foreground">{gameTime}</span>
+            <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${park.color}`}>
+              {park.label}
+            </span>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {/* Matchup */}
+          <div className="flex items-center justify-between">
+            <div className="text-center flex-1">
+              <div className="text-2xl font-bold group-hover:text-primary transition-colors">
+                {game.awayTeam.abbreviation}
+              </div>
+              <div className="text-xs text-muted-foreground mt-0.5">{game.awayTeam.name}</div>
+            </div>
+            <div className="text-muted-foreground/50 font-bold text-lg px-4">@</div>
+            <div className="text-center flex-1">
+              <div className="text-2xl font-bold group-hover:text-primary transition-colors">
+                {game.homeTeam.abbreviation}
+              </div>
+              <div className="text-xs text-muted-foreground mt-0.5">{game.homeTeam.name}</div>
+            </div>
+          </div>
+
+          {/* Pitchers */}
+          <div className="border-t border-border pt-3 grid grid-cols-2 gap-3 text-xs">
+            <div>
+              <div className="text-muted-foreground mb-1">Away SP</div>
+              {game.awayStartingPitcher ? (
+                <>
+                  <div className="font-medium truncate">{game.awayStartingPitcher.name}</div>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <Badge variant="outline" className="text-[10px] px-1 py-0">
+                      {game.awayStartingPitcher.hand}HP
+                    </Badge>
+                    <span className="text-muted-foreground">ERA {game.awayStartingPitcher.seasonERA.toFixed(2)}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="text-muted-foreground/50">TBD</div>
+              )}
+            </div>
+            <div>
+              <div className="text-muted-foreground mb-1">Home SP</div>
+              {game.homeStartingPitcher ? (
+                <>
+                  <div className="font-medium truncate">{game.homeStartingPitcher.name}</div>
+                  <div className="flex items-center gap-1.5 mt-0.5">
+                    <Badge variant="outline" className="text-[10px] px-1 py-0">
+                      {game.homeStartingPitcher.hand}HP
+                    </Badge>
+                    <span className="text-muted-foreground">ERA {game.homeStartingPitcher.seasonERA.toFixed(2)}</span>
+                  </div>
+                </>
+              ) : (
+                <div className="text-muted-foreground/50">TBD</div>
+              )}
+            </div>
+          </div>
+
+          <div className="text-xs text-muted-foreground/60 truncate">{game.venue}</div>
+        </CardContent>
+      </Card>
+    </Link>
+  );
+}
+
+export default async function HomePage() {
+  const snapshot = await getSnapshot();
+
+  if (!snapshot) {
+    return (
+      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center">
+        <div className="text-6xl">⚾</div>
+        <h1 className="text-2xl font-bold">No Data Yet</h1>
+        <p className="text-muted-foreground max-w-sm">
+          The daily sync hasn&apos;t run yet. Data syncs automatically at 9am EST.
+        </p>
+      </div>
+    );
+  }
+
+  const syncTime = new Date(snapshot.syncedAt).toLocaleTimeString("en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  });
+
+  return (
+    <div className="space-y-6">
+      <div>
+        <h1 className="text-2xl font-bold">Today&apos;s Games</h1>
+        <p className="text-sm text-muted-foreground mt-0.5">
+          {snapshot.games.length} games · Synced at {syncTime}
+        </p>
+      </div>
+
+      {snapshot.games.length === 0 ? (
+        <div className="text-center py-20 text-muted-foreground">No games scheduled today.</div>
+      ) : (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
+          {snapshot.games.map((game) => (
+            <GameCard key={game.gamePk} game={game} />
+          ))}
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+      )}
     </div>
   );
 }
