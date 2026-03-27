@@ -27,24 +27,33 @@ export default function RootLayout({
           <TooltipProvider>
             {/* Header */}
             <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-md">
-              <div className="max-w-7xl mx-auto px-4 sm:px-6 h-14 flex items-center gap-4">
-                {/* Brand */}
-                <a href="/" className="flex items-center gap-2 shrink-0">
-                  <span className="text-xl leading-none">🔥</span>
-                  <span className="font-bold text-lg tracking-tight brand-text">
-                    Fire Picks
-                  </span>
-                </a>
+              <div className="max-w-7xl mx-auto px-4 sm:px-6">
+                {/* Main row */}
+                <div className="h-14 flex items-center gap-4">
+                  {/* Brand */}
+                  <a href="/" className="flex items-center gap-2 shrink-0">
+                    <span className="text-xl leading-none">🔥</span>
+                    <span className="font-bold text-lg tracking-tight brand-text">
+                      Fire Picks
+                    </span>
+                  </a>
 
-                <div className="w-px h-5 bg-border shrink-0" />
+                  {/* Sport nav — inline on sm+ */}
+                  <div className="hidden sm:flex items-center gap-4">
+                    <div className="w-px h-5 bg-border shrink-0" />
+                    <SportNav />
+                  </div>
 
-                {/* Sport nav */}
-                <SportNav />
+                  {/* Right side */}
+                  <div className="ml-auto flex items-center gap-2">
+                    <AuthNav />
+                    <ThemeToggle />
+                  </div>
+                </div>
 
-                {/* Right side */}
-                <div className="ml-auto flex items-center gap-2">
-                  <AuthNav />
-                  <ThemeToggle />
+                {/* Sport nav — second row on mobile */}
+                <div className="sm:hidden pb-2">
+                  <SportNav />
                 </div>
               </div>
             </header>

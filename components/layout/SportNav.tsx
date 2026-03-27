@@ -60,7 +60,7 @@ export function SportNav() {
       </div>
 
       {pending && (
-        <div className="absolute top-10 left-0 z-50 bg-card border border-border rounded-xl px-5 py-4 shadow-xl flex items-center gap-3 min-w-52">
+        <div className="absolute top-10 left-0 z-50 bg-card border border-border rounded-xl px-5 py-4 shadow-xl flex items-center gap-3 w-52">
           <Construction size={18} className="text-primary shrink-0" />
           <div>
             <div className="font-semibold text-sm">{pending} — Coming Soon</div>
