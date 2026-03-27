@@ -2,12 +2,17 @@
 
 import { ThemeProvider as NextThemesProvider } from "next-themes";
 
-export function ThemeProvider({ children }: { children: React.ReactNode }) {
+export function ThemeProvider({
+  children,
+  defaultTheme,
+}: {
+  children: React.ReactNode;
+  defaultTheme: "light" | "dark";
+}) {
   return (
     <NextThemesProvider
       attribute="class"
-      defaultTheme="dark"
-      enableSystem
+      defaultTheme={defaultTheme}
       disableTransitionOnChange
     >
       {children}

@@ -20,10 +20,15 @@ export const metadata: Metadata = {
 export default function RootLayout({
   children,
 }: Readonly<{ children: React.ReactNode }>) {
+  const etHour = parseInt(
+    new Date().toLocaleString("en-US", { timeZone: "America/New_York", hour: "numeric", hour12: false })
+  );
+  const defaultTheme = etHour >= 19 ? "dark" : "light";
+
   return (
     <html lang="en" className={geistSans.variable} suppressHydrationWarning>
       <body className="min-h-screen flex flex-col bg-background text-foreground">
-        <ThemeProvider>
+        <ThemeProvider defaultTheme={defaultTheme}>
           <TooltipProvider>
             {/* Header */}
             <header className="sticky top-0 z-40 border-b border-border bg-background/80 backdrop-blur-md">

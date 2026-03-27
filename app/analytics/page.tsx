@@ -52,7 +52,7 @@ export default async function AnalyticsPage() {
   ];
 
   const syncTime = new Date(snapshot.syncedAt).toLocaleTimeString("en-US", {
-    hour: "numeric", minute: "2-digit",
+    hour: "numeric", minute: "2-digit", timeZone: "America/New_York",
   });
 
   return (

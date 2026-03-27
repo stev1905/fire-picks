@@ -40,6 +40,7 @@ export default async function GamePage({
   const gameTime = new Date(game.gameDate).toLocaleTimeString("en-US", {
     hour: "numeric",
     minute: "2-digit",
+    timeZone: "America/New_York",
     timeZoneName: "short",
   });
   const park = parkLabel(game.parkFactor);
