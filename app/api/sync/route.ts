@@ -1,6 +1,5 @@
 // Manual sync trigger — useful for testing before scheduled function runs
 import { NextResponse } from "next/server";
-import { getStore } from "@netlify/blobs";
 import { buildDailySnapshot } from "@/lib/mlbApi";
 
 export async function POST(request: Request) {
@@ -9,6 +8,7 @@ export async function POST(request: Request) {
 
   try {
     const snapshot = await buildDailySnapshot(date);
+    const { getStore } = await import("@netlify/blobs");
     const store = getStore("mlb-daily");
     await store.setJSON(`snapshot-${date}`, snapshot);
     await store.setJSON("snapshot-latest", snapshot);
