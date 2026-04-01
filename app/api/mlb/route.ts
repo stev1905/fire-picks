@@ -1,31 +1,30 @@
 import { NextResponse } from "next/server";
 import type { DailySnapshot } from "@/types/mlb";
-import { buildDailySnapshot } from "@/lib/mlbApi";
+import { createClient } from "@supabase/supabase-js";
 
-const isLocal = process.env.NETLIFY !== "true";
+function supabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+}
 
 export async function GET(request: Request) {
   const { searchParams } = new URL(request.url);
   const date = searchParams.get("date") ?? new Date().toISOString().split("T")[0];
 
   try {
-    // Local dev: fetch live from MLB API directly
-    if (isLocal) {
-      const snapshot = await buildDailySnapshot(date);
-      return NextResponse.json(snapshot);
-    }
+    const { data, error } = await supabase()
+      .from("snapshots")
+      .select("data")
+      .eq("date", date)
+      .single();
 
-    // Production: read from Netlify Blob Storage
-    const { getStore } = await import("@netlify/blobs");
-    const store = getStore("mlb-daily");
-    const key = date ? `snapshot-${date}` : "snapshot-latest";
-    const snapshot = await store.get(key, { type: "json" }) as DailySnapshot | null;
-
-    if (!snapshot) {
+    if (error || !data) {
       return NextResponse.json({ error: "No data available. Sync has not run yet." }, { status: 404 });
     }
 
-    return NextResponse.json(snapshot);
+    return NextResponse.json(data.data as DailySnapshot);
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }

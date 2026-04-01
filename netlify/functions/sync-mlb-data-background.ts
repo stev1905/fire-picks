@@ -1,8 +1,15 @@
-import { getStore } from "@netlify/blobs";
+import { createClient } from "@supabase/supabase-js";
 import { buildDailySnapshot } from "../../lib/mlbApi";
 
 // Background function — no timeout limit (up to 15 min)
 // Trigger manually: POST /.netlify/functions/sync-mlb-data-background
+function supabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+}
+
 export default async function handler() {
   const today = new Date().toISOString().split("T")[0];
 
@@ -10,9 +17,12 @@ export default async function handler() {
 
   try {
     const snapshot = await buildDailySnapshot(today);
-    const store = getStore("mlb-daily");
-    await store.setJSON(`snapshot-${today}`, snapshot);
-    await store.setJSON("snapshot-latest", snapshot);
+
+    const { error } = await supabase()
+      .from("snapshots")
+      .upsert({ date: today, data: snapshot, synced_at: new Date().toISOString() });
+
+    if (error) throw error;
 
     console.log(`[sync-background] Synced ${snapshot.games.length} games for ${today}`);
   } catch (err) {

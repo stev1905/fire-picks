@@ -1,6 +1,14 @@
 // Manual sync trigger — useful for testing before scheduled function runs
 import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 import { buildDailySnapshot } from "@/lib/mlbApi";
+
+function supabase() {
+  return createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+  );
+}
 
 export async function POST(request: Request) {
   const { searchParams } = new URL(request.url);
@@ -8,10 +16,12 @@ export async function POST(request: Request) {
 
   try {
     const snapshot = await buildDailySnapshot(date);
-    const { getStore } = await import("@netlify/blobs");
-    const store = getStore("mlb-daily");
-    await store.setJSON(`snapshot-${date}`, snapshot);
-    await store.setJSON("snapshot-latest", snapshot);
+
+    const { error } = await supabase()
+      .from("snapshots")
+      .upsert({ date, data: snapshot, synced_at: new Date().toISOString() });
+
+    if (error) throw error;
 
     return NextResponse.json({ success: true, date, games: snapshot.games.length });
   } catch (err) {
