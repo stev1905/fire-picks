@@ -1,6 +1,6 @@
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import type { DailySnapshot } from "@/types/mlb";
+import { getSnapshot } from "@/lib/getSnapshot";
 import {
   getHottestHitters,
   getColdestHitters,
@@ -11,17 +11,6 @@ import {
 import { HitterChart } from "@/components/analytics/HitterChart";
 import { HRChart } from "@/components/analytics/HRChart";
 import { PitcherChart } from "@/components/analytics/PitcherChart";
-
-async function getSnapshot(): Promise<DailySnapshot | null> {
-  try {
-    const base = process.env.URL ?? "http://localhost:3000";
-    const res = await fetch(`${base}/api/mlb`, { cache: "no-store" });
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
-  }
-}
 
 export default async function AnalyticsPage() {
   // Auth gate

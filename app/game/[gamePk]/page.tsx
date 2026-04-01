@@ -1,22 +1,12 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import type { DailySnapshot, MLBGame } from "@/types/mlb";
+import { getSnapshot } from "@/lib/getSnapshot";
+import type { MLBGame } from "@/types/mlb";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { BatterCard } from "@/components/BatterCard";
 import { PitcherCard } from "@/components/PitcherCard";
-
-async function getSnapshot(): Promise<DailySnapshot | null> {
-  try {
-    const base = process.env.URL ?? "http://localhost:3000";
-    const res = await fetch(`${base}/api/mlb`, { cache: "no-store" });
-    if (!res.ok) return null;
-    return res.json();
-  } catch {
-    return null;
-  }
-}
 
 function parkLabel(factor: number) {
   if (factor >= 1.10) return { label: "Very Hitter Friendly", color: "text-green-500 dark:text-green-400" };
