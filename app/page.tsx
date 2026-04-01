@@ -1,4 +1,6 @@
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
 import type { DailySnapshot, MLBGame } from "@/types/mlb";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
@@ -104,6 +106,10 @@ function GameCard({ game }: { game: MLBGame }) {
 }
 
 export default async function HomePage() {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/auth/login");
+
   const snapshot = await getSnapshot();
 
   if (!snapshot) {

@@ -1,5 +1,6 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
+import { createClient } from "@/lib/supabase/server";
 import type { DailySnapshot, MLBGame } from "@/types/mlb";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
@@ -30,6 +31,10 @@ export default async function GamePage({
 }: {
   params: Promise<{ gamePk: string }>;
 }) {
+  const supabase = await createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) redirect("/auth/login");
+
   const { gamePk } = await params;
   const snapshot = await getSnapshot();
   if (!snapshot) notFound();

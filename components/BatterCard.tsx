@@ -19,9 +19,11 @@ function stat(value: number, decimals = 3) {
 function matchupRating(batter: MLBBatter, pitcher?: MLBPitcher) {
   if (!pitcher) return null;
   const avg = pitcher.hand === "L" ? batter.avgVsLeft : batter.avgVsRight;
-  if (avg >= 0.280) return { label: "Favorable Matchup", color: "bg-green-500/90 text-white" };
-  if (avg <= 0.210) return { label: "Unfavorable Matchup", color: "bg-red-500/80 text-white" };
-  return { label: "Neutral Matchup", color: "bg-muted text-muted-foreground" };
+  const avgStr = avg.toFixed(3).replace(/^0/, "");
+  const hand = pitcher.hand === "L" ? "LHP" : "RHP";
+  if (avg >= 0.280) return { label: `${avgStr} vs ${hand}`, color: "bg-green-500/90 text-white" };
+  if (avg <= 0.210) return { label: `${avgStr} vs ${hand}`, color: "bg-red-500/80 text-white" };
+  return { label: `${avgStr} vs ${hand}`, color: "bg-muted text-muted-foreground" };
 }
 
 function StatBox({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
@@ -70,6 +72,14 @@ export function BatterCard({ batter, opposingPitcher }: Props) {
     SLG: g.slg,
   }));
 
+  const hitsIn10 = batter.last10Games.filter((g) => g.hits > 0).length;
+  const hasLast10 = batter.last10Games.length > 0;
+  const hitLabel =
+    hitsIn10 <= 2 ? { color: "text-red-500 dark:text-red-400", icon: "🧊" }
+    : hitsIn10 <= 4 ? { color: "text-orange-500 dark:text-orange-400", icon: "❄️" }
+    : hitsIn10 >= 8 ? { color: "text-green-500 dark:text-green-400", icon: "🔥" }
+    : { color: "text-muted-foreground", icon: null };
+
   return (
     <Card>
       <CardHeader className="pb-2">
@@ -84,6 +94,12 @@ export function BatterCard({ batter, opposingPitcher }: Props) {
             {batter.hittingStreak > 0 && (
               <div className="text-xs text-amber-500 dark:text-amber-400 mt-1">
                 🔥 {batter.hittingStreak}-game hitting streak
+              </div>
+            )}
+            {hasLast10 && (
+              <div className={`text-xs mt-1 ${hitLabel.color}`}>
+                {hitLabel.icon && <span className="mr-1">{hitLabel.icon}</span>}
+                Hit in {hitsIn10} of last {batter.last10Games.length} games
               </div>
             )}
           </div>
