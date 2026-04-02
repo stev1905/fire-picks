@@ -51,20 +51,11 @@ export default async function AnalyticsPage() {
     getHottestPitchers(snapshot),
   ];
 
-  const syncTime = new Date(snapshot.syncedAt).toLocaleTimeString("en-US", {
-    hour: "numeric", minute: "2-digit", timeZone: "America/New_York",
-  });
-
   return (
     <div className="space-y-8">
       {/* Header */}
       <div>
-        <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-bold">Analytics</h1>
-          <span className="text-xs text-muted-foreground border border-border rounded-full px-2.5 py-0.5">
-            MLB · {snapshot.date} · synced {syncTime}
-          </span>
-        </div>
+        <h1 className="text-2xl font-bold">Analytics</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Ranked across {snapshot.games.length} games today
         </p>

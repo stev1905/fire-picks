@@ -124,19 +124,11 @@ export default async function HomePage() {
     );
   }
 
-  const syncTime = new Date(snapshot.syncedAt).toLocaleTimeString("en-US", {
-    hour: "numeric",
-    minute: "2-digit",
-    timeZone: "America/New_York",
-  });
-
   return (
     <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Today&apos;s Games</h1>
-        <p className="text-sm text-muted-foreground mt-0.5">
-          {snapshot.games.length} games · Synced at {syncTime}
-        </p>
+        <p className="text-sm text-muted-foreground mt-0.5">{snapshot.games.length} games today</p>
       </div>
 
       {snapshot.games.length === 0 ? (

@@ -28,22 +28,20 @@ function matchupRating(batter: MLBBatter, pitcher?: MLBPitcher) {
 
 function StatBox({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
-    <div className={`flex flex-col items-center p-2 rounded-lg ${highlight ? "bg-secondary" : "bg-muted"}`}>
-      <span className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</span>
-      <span className="font-mono font-bold text-sm mt-0.5">{value}</span>
+    <div className={`flex flex-col items-center p-1.5 rounded-lg ${highlight ? "bg-secondary" : "bg-muted"}`}>
+      <span className="text-[9px] text-muted-foreground uppercase tracking-wide">{label}</span>
+      <span className="font-mono font-bold text-xs mt-0.5">{value}</span>
     </div>
   );
 }
 
-function WindowStats({ label, v3, v6, v10 }: { label: string; v3: number; v6: number; v10: number; isInt?: boolean }) {
+function WindowStats({ label, v3, v6, v10 }: { label: string; v3: number; v6: number; v10: number }) {
   return (
-    <div>
-      <div className="text-xs text-muted-foreground mb-1.5 uppercase tracking-wide">{label}</div>
-      <div className="grid grid-cols-3 gap-1.5">
-        <StatBox label="L3" value={label === "HR" ? String(v3) : stat(v3)} />
-        <StatBox label="L6" value={label === "HR" ? String(v6) : stat(v6)} />
-        <StatBox label="L10" value={label === "HR" ? String(v10) : stat(v10)} />
-      </div>
+    <div className="grid grid-cols-4 gap-1.5 items-center">
+      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</div>
+      <StatBox label="L3" value={label === "HR" ? String(v3) : stat(v3)} />
+      <StatBox label="L6" value={label === "HR" ? String(v6) : stat(v6)} />
+      <StatBox label="L10" value={label === "HR" ? String(v10) : stat(v10)} />
     </div>
   );
 }
@@ -82,26 +80,28 @@ export function BatterCard({ batter, opposingPitcher }: Props) {
 
   return (
     <Card>
-      <CardHeader className="pb-2">
+      <CardHeader className="pb-2 pt-3 px-3">
         <div className="flex items-start justify-between gap-2">
           <div>
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-1.5 flex-wrap">
               <span className="text-xs text-muted-foreground font-mono">#{batter.battingOrder}</span>
-              <span className="font-semibold">{batter.name}</span>
-              <Badge variant="outline" className="text-[10px] px-1.5">{batter.hand}</Badge>
-              <Badge variant="outline" className="text-[10px] px-1.5">{batter.position}</Badge>
+              <span className="font-semibold text-sm">{batter.name}</span>
+              <Badge variant="outline" className="text-[10px] px-1">{batter.hand}</Badge>
+              <Badge variant="outline" className="text-[10px] px-1">{batter.position}</Badge>
             </div>
-            {batter.hittingStreak > 0 && (
-              <div className="text-xs text-amber-500 dark:text-amber-400 mt-1">
-                🔥 {batter.hittingStreak}-game hitting streak
-              </div>
-            )}
-            {hasLast10 && (
-              <div className={`text-xs mt-1 ${hitLabel.color}`}>
-                {hitLabel.icon && <span className="mr-1">{hitLabel.icon}</span>}
-                Hit in {hitsIn10} of last {batter.last10Games.length} games
-              </div>
-            )}
+            <div className="flex flex-wrap gap-x-3 mt-0.5">
+              {batter.hittingStreak > 0 && (
+                <div className="text-xs text-amber-500 dark:text-amber-400">
+                  🔥 {batter.hittingStreak}-game streak
+                </div>
+              )}
+              {hasLast10 && (
+                <div className={`text-xs ${hitLabel.color}`}>
+                  {hitLabel.icon && <span className="mr-0.5">{hitLabel.icon}</span>}
+                  {hitsIn10}/{batter.last10Games.length} games with hit
+                </div>
+              )}
+            </div>
           </div>
           {matchup && (
             <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 ${matchup.color}`}>
@@ -111,44 +111,30 @@ export function BatterCard({ batter, opposingPitcher }: Props) {
         </div>
       </CardHeader>
 
-      <CardContent className="space-y-4">
-        {/* Season summary */}
-        <div className="grid grid-cols-3 gap-1.5">
-          <StatBox label="Season AVG" value={stat(batter.seasonAVG)} highlight />
-          <StatBox label="Season SLG" value={stat(batter.seasonSLG)} highlight />
-          <StatBox label="Season HR" value={String(batter.seasonHR)} highlight />
+      <CardContent className="space-y-2 px-3 pb-3">
+        {/* Season + splits in one row */}
+        <div className="grid grid-cols-5 gap-1.5">
+          <StatBox label="AVG" value={stat(batter.seasonAVG)} highlight />
+          <StatBox label="SLG" value={stat(batter.seasonSLG)} highlight />
+          <StatBox label="HR" value={String(batter.seasonHR)} highlight />
+          <StatBox label="vsL" value={stat(batter.avgVsLeft)} />
+          <StatBox label="vsR" value={stat(batter.avgVsRight)} />
         </div>
 
-        {/* Splits */}
-        <div className="grid grid-cols-2 gap-1.5">
-          <div>
-            <div className="text-[10px] text-muted-foreground mb-1">vs LHP</div>
-            <div className="font-mono text-sm font-bold">
-              {stat(batter.avgVsLeft)} / {stat(batter.slgVsLeft)}
-            </div>
-            <div className="text-[10px] text-muted-foreground">AVG / SLG</div>
-          </div>
-          <div>
-            <div className="text-[10px] text-muted-foreground mb-1">vs RHP</div>
-            <div className="font-mono text-sm font-bold">
-              {stat(batter.avgVsRight)} / {stat(batter.slgVsRight)}
-            </div>
-            <div className="text-[10px] text-muted-foreground">AVG / SLG</div>
-          </div>
+        {/* Rolling windows — compact single-row per stat */}
+        <div className="space-y-1">
+          <WindowStats label="AVG" v3={batter.last3AVG} v6={batter.last6AVG} v10={batter.last10AVG} />
+          <WindowStats label="SLG" v3={batter.last3SLG} v6={batter.last6SLG} v10={batter.last10SLG} />
+          <WindowStats label="HR"  v3={batter.last3HR}  v6={batter.last6HR}  v10={batter.last10HR} />
         </div>
 
-        {/* Rolling windows */}
-        <WindowStats label="AVG" v3={batter.last3AVG} v6={batter.last6AVG} v10={batter.last10AVG} />
-        <WindowStats label="SLG" v3={batter.last3SLG} v6={batter.last6SLG} v10={batter.last10SLG} />
-        <WindowStats label="HR"  v3={batter.last3HR}  v6={batter.last6HR}  v10={batter.last10HR} />
-
-        {/* Trend chart */}
+        {/* Trend chart — hidden on mobile */}
         {chartData.length > 0 && (
-          <div>
-            <div className="text-xs text-muted-foreground mb-2 uppercase tracking-wide">
+          <div className="hidden sm:block">
+            <div className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wide">
               Last 10 Games Trend
             </div>
-            <ResponsiveContainer width="100%" height={80}>
+            <ResponsiveContainer width="100%" height={70}>
               <LineChart data={chartData}>
                 <XAxis
                   dataKey="name"
