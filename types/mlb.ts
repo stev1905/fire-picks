@@ -9,6 +9,7 @@ export interface MLBGame {
   homeLineup: MLBBatter[];
   awayLineup: MLBBatter[];
   venue: string;
+  venueId: number;
   parkFactor: number;
 }
 

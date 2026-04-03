@@ -28,17 +28,17 @@ function matchupRating(batter: MLBBatter, pitcher?: MLBPitcher) {
 
 function StatBox({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
-    <div className={`flex flex-col items-center p-1.5 rounded-lg ${highlight ? "bg-secondary" : "bg-muted"}`}>
-      <span className="text-[9px] text-muted-foreground uppercase tracking-wide">{label}</span>
-      <span className="font-mono font-bold text-xs mt-0.5">{value}</span>
+    <div className={`flex flex-col items-center p-1 rounded ${highlight ? "bg-secondary" : "bg-muted"}`}>
+      <span className="text-[8px] text-muted-foreground uppercase tracking-wide leading-tight">{label}</span>
+      <span className="font-mono font-bold text-[11px] leading-tight mt-0.5">{value}</span>
     </div>
   );
 }
 
 function WindowStats({ label, v3, v6, v10 }: { label: string; v3: number; v6: number; v10: number }) {
   return (
-    <div className="grid grid-cols-4 gap-1.5 items-center">
-      <div className="text-[10px] text-muted-foreground uppercase tracking-wide">{label}</div>
+    <div className="grid grid-cols-4 gap-1 items-center">
+      <div className="text-[9px] text-muted-foreground uppercase tracking-wide">{label}</div>
       <StatBox label="L3" value={label === "HR" ? String(v3) : stat(v3)} />
       <StatBox label="L6" value={label === "HR" ? String(v6) : stat(v6)} />
       <StatBox label="L10" value={label === "HR" ? String(v10) : stat(v10)} />
@@ -80,65 +80,65 @@ export function BatterCard({ batter, opposingPitcher }: Props) {
 
   return (
     <Card>
-      <CardHeader className="pb-2 pt-3 px-3">
-        <div className="flex items-start justify-between gap-2">
-          <div>
-            <div className="flex items-center gap-1.5 flex-wrap">
-              <span className="text-xs text-muted-foreground font-mono">#{batter.battingOrder}</span>
-              <span className="font-semibold text-sm">{batter.name}</span>
-              <Badge variant="outline" className="text-[10px] px-1">{batter.hand}</Badge>
-              <Badge variant="outline" className="text-[10px] px-1">{batter.position}</Badge>
+      <CardHeader className="pb-1.5 pt-2 px-2">
+        <div className="flex items-start justify-between gap-1">
+          <div className="min-w-0">
+            <div className="flex items-center gap-1 flex-wrap">
+              <span className="text-[10px] text-muted-foreground font-mono">#{batter.battingOrder}</span>
+              <span className="font-semibold text-xs truncate">{batter.name}</span>
+              <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">{batter.hand}</Badge>
+              <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">{batter.position}</Badge>
             </div>
-            <div className="flex flex-wrap gap-x-3 mt-0.5">
+            <div className="flex flex-wrap gap-x-2 mt-0.5">
               {batter.hittingStreak > 0 && (
-                <div className="text-xs text-amber-500 dark:text-amber-400">
+                <div className="text-[10px] text-amber-500 dark:text-amber-400">
                   🔥 {batter.hittingStreak}-game streak
                 </div>
               )}
               {hasLast10 && (
-                <div className={`text-xs ${hitLabel.color}`}>
+                <div className={`text-[10px] ${hitLabel.color}`}>
                   {hitLabel.icon && <span className="mr-0.5">{hitLabel.icon}</span>}
-                  {hitsIn10}/{batter.last10Games.length} games with hit
+                  {hitsIn10}/{batter.last10Games.length} w/hit
                 </div>
               )}
             </div>
           </div>
           {matchup && (
-            <span className={`text-[10px] px-2 py-0.5 rounded-full font-medium shrink-0 ${matchup.color}`}>
+            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${matchup.color}`}>
               {matchup.label}
             </span>
           )}
         </div>
       </CardHeader>
 
-      <CardContent className="space-y-2 px-3 pb-3">
-        {/* Season + splits in one row */}
-        <div className="grid grid-cols-5 gap-1.5">
+      <CardContent className="space-y-1.5 px-2 pb-2">
+        {/* Season + splits */}
+        <div className="grid grid-cols-5 gap-1">
           <StatBox label="AVG" value={stat(batter.seasonAVG)} highlight />
           <StatBox label="SLG" value={stat(batter.seasonSLG)} highlight />
-          <StatBox label="HR" value={String(batter.seasonHR)} highlight />
+          <StatBox label="HR"  value={String(batter.seasonHR)} highlight />
           <StatBox label="vsL" value={stat(batter.avgVsLeft)} />
           <StatBox label="vsR" value={stat(batter.avgVsRight)} />
         </div>
 
-        {/* Rolling windows — compact single-row per stat */}
-        <div className="space-y-1">
+        {/* Rolling windows */}
+        <div className="space-y-0.5">
           <WindowStats label="AVG" v3={batter.last3AVG} v6={batter.last6AVG} v10={batter.last10AVG} />
           <WindowStats label="SLG" v3={batter.last3SLG} v6={batter.last6SLG} v10={batter.last10SLG} />
           <WindowStats label="HR"  v3={batter.last3HR}  v6={batter.last6HR}  v10={batter.last10HR} />
         </div>
 
-        {/* Trend chart — hidden on mobile */}
+        {/* Trend chart — desktop only */}
         {chartData.length > 0 && (
-          <div className="hidden sm:block">
-            <div className="text-[10px] text-muted-foreground mb-1 uppercase tracking-wide">
-              Last 10 Games Trend
+          <div className="hidden sm:block pt-0.5">
+            <div className="text-[9px] text-muted-foreground mb-0.5 uppercase tracking-wide">
+              Last 10 Trend
             </div>
-            <ResponsiveContainer width="100%" height={70}>
+            <ResponsiveContainer width="100%" height={55}>
               <LineChart data={chartData}>
                 <XAxis
                   dataKey="name"
-                  tick={{ fontSize: 9, fill: "var(--muted-foreground)" }}
+                  tick={{ fontSize: 8, fill: "var(--muted-foreground)" }}
                   axisLine={false}
                   tickLine={false}
                 />
@@ -148,7 +148,7 @@ export function BatterCard({ batter, opposingPitcher }: Props) {
                 <Line type="monotone" dataKey="SLG" stroke="#a78bfa" strokeWidth={1.5} dot={false} />
               </LineChart>
             </ResponsiveContainer>
-            <div className="flex gap-3 text-[10px] text-muted-foreground mt-1">
+            <div className="flex gap-3 text-[9px] text-muted-foreground">
               <span className="flex items-center gap-1">
                 <span className="w-3 h-px bg-blue-400 inline-block" /> AVG
               </span>

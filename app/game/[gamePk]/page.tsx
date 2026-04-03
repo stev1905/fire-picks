@@ -1,11 +1,13 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import type { DailySnapshot, MLBGame } from "@/types/mlb";
+import type { DailySnapshot } from "@/types/mlb";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
-import { BatterCard } from "@/components/BatterCard";
 import { PitcherCard } from "@/components/PitcherCard";
+import { LineupSorter } from "@/components/LineupSorter";
+import { getGameWeather } from "@/lib/weather";
+import type { GameWeather } from "@/lib/weather";
 
 async function getSnapshot(): Promise<DailySnapshot | null> {
   try {
@@ -26,6 +28,23 @@ function parkLabel(factor: number) {
   return { label: "Neutral Park", color: "text-muted-foreground" };
 }
 
+function WeatherWidget({ weather }: { weather: GameWeather }) {
+  if (weather.indoor) {
+    return <div className="text-xs text-muted-foreground mt-1">🏟️ Indoor</div>;
+  }
+  return (
+    <div className="text-xs mt-1 space-y-0.5">
+      <div className="font-medium">
+        {weather.icon} {weather.tempF}°F · {weather.windMph} mph {weather.windDir}
+      </div>
+      <div className="text-muted-foreground">{weather.condition}</div>
+      {weather.precipChance >= 20 && (
+        <div className="text-blue-400">🌧️ {weather.precipChance}% precip</div>
+      )}
+    </div>
+  );
+}
+
 export default async function GamePage({
   params,
 }: {
@@ -41,6 +60,8 @@ export default async function GamePage({
 
   const game = snapshot.games.find((g) => String(g.gamePk) === gamePk);
   if (!game) notFound();
+
+  const weather = await getGameWeather(game.venueId ?? 0, game.gameDate);
 
   const gameTime = new Date(game.gameDate).toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -61,8 +82,8 @@ export default async function GamePage({
       </Link>
 
       {/* Header */}
-      <div className="bg-card border border-border rounded-xl p-6">
-        <div className="flex flex-col sm:flex-row items-center gap-6">
+      <div className="bg-card border border-border rounded-xl p-4 sm:p-6">
+        <div className="flex flex-col sm:flex-row items-center gap-4 sm:gap-6">
           {/* Away */}
           <div className="text-center flex-1">
             <div className="text-4xl font-bold">{game.awayTeam.abbreviation}</div>
@@ -82,12 +103,13 @@ export default async function GamePage({
           </div>
 
           {/* Game info */}
-          <div className="text-center px-6">
+          <div className="text-center px-4 sm:px-6 shrink-0">
             <div className="text-muted-foreground/50 font-bold text-2xl">@</div>
             <div className="text-xs text-muted-foreground mt-1">{gameTime}</div>
             <div className={`text-xs mt-1 font-semibold ${park.color}`}>{park.label}</div>
             <div className="text-xs text-muted-foreground/70 mt-0.5">{game.venue}</div>
             <div className="text-xs text-muted-foreground/50">Park Factor: {game.parkFactor.toFixed(2)}</div>
+            <WeatherWidget weather={weather} />
           </div>
 
           {/* Home */}
@@ -119,11 +141,17 @@ export default async function GamePage({
         </TabsList>
 
         <TabsContent value="away" className="mt-4">
-          <TeamLineup game={game} side="away" />
+          <LineupSorter
+            lineup={game.awayLineup}
+            opposingPitcher={game.homeStartingPitcher}
+          />
         </TabsContent>
 
         <TabsContent value="home" className="mt-4">
-          <TeamLineup game={game} side="home" />
+          <LineupSorter
+            lineup={game.homeLineup}
+            opposingPitcher={game.awayStartingPitcher}
+          />
         </TabsContent>
 
         <TabsContent value="pitchers" className="mt-4">
@@ -142,51 +170,6 @@ export default async function GamePage({
           </div>
         </TabsContent>
       </Tabs>
-    </div>
-  );
-}
-
-function TeamLineup({ game, side }: { game: MLBGame; side: "home" | "away" }) {
-  const lineup = side === "away" ? game.awayLineup : game.homeLineup;
-  const opposingPitcher = side === "away" ? game.homeStartingPitcher : game.awayStartingPitcher;
-
-  if (lineup.length === 0) {
-    return (
-      <div className="text-center py-12 text-muted-foreground">
-        Lineup not yet posted.
-      </div>
-    );
-  }
-
-  const sorted = [...lineup].sort((a, b) => b.last3AVG - a.last3AVG);
-  const topThree = new Set(sorted.slice(0, 3).map((b) => b.id));
-
-  return (
-    <div className="space-y-3">
-      {opposingPitcher && (
-        <div className="text-sm text-muted-foreground mb-4">
-          Facing:{" "}
-          <span className="text-foreground font-medium">{opposingPitcher.name}</span>
-          <Badge variant="outline" className="ml-1.5 text-[10px]">
-            {opposingPitcher.hand}HP
-          </Badge>
-          <span className="ml-1.5">ERA {opposingPitcher.seasonERA.toFixed(2)}</span>
-        </div>
-      )}
-
-      {topThree.size > 0 && (
-        <div className="text-xs text-amber-500 dark:text-amber-400 mb-2">
-          ★ Top 3 hottest hitters (last 3 games) highlighted
-        </div>
-      )}
-
-      <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3">
-        {lineup.map((batter) => (
-          <div key={batter.id} className={topThree.has(batter.id) ? "ring-1 ring-amber-500/40 rounded-xl" : ""}>
-            <BatterCard batter={batter} opposingPitcher={opposingPitcher} />
-          </div>
-        ))}
-      </div>
     </div>
   );
 }

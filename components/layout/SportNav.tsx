@@ -6,11 +6,25 @@ import { useState } from "react";
 import { Construction } from "lucide-react";
 
 const SPORTS = [
-  { label: "MLB", href: "/", active: true },
-  { label: "NHL", href: null },
+  { label: "MLB", href: "/" },
+  { label: "NHL", href: "/nhl" },
   { label: "NBA", href: null },
   { label: "NFL", href: null },
 ];
+
+function isRouteActive(label: string, pathname: string): boolean {
+  if (label === "MLB") {
+    return (
+      pathname === "/" ||
+      pathname.startsWith("/game") ||
+      pathname.startsWith("/analytics")
+    );
+  }
+  if (label === "NHL") {
+    return pathname === "/nhl" || pathname.startsWith("/nhl/");
+  }
+  return false;
+}
 
 export function SportNav() {
   const pathname = usePathname();
@@ -20,11 +34,7 @@ export function SportNav() {
     <div className="relative">
       <div className="flex items-center gap-1">
         {SPORTS.map((sport) => {
-          const isActive = sport.href
-            ? pathname === sport.href || pathname.startsWith("/game") || pathname.startsWith("/analytics")
-              ? sport.label === "MLB"
-              : false
-            : false;
+          const isActive = sport.href ? isRouteActive(sport.label, pathname) : false;
 
           if (sport.href) {
             return (

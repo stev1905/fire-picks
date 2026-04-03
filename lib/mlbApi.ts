@@ -357,6 +357,7 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
         homeTeam: item.homeTeam,
         awayTeam: item.awayTeam,
         venue: (item as any).venueName ?? "",
+        venueId: item.venueId,
         parkFactor: parkInfo.factor,
         homeLineup: homeLineup.map(buildBatter),
         awayLineup: awayLineup.map(buildBatter),
