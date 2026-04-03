@@ -11,7 +11,7 @@ function supabase() {
 
 export async function POST(request: Request) {
   const { searchParams } = new URL(request.url);
-  const date = searchParams.get("date") ?? new Date().toISOString().split("T")[0];
+  const date = searchParams.get("date") ?? new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
   const key = `nhl-${date}`;
 
   try {

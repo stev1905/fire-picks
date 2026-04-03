@@ -15,7 +15,7 @@ function supabase() {
 }
 
 export default async function handler() {
-  const today = new Date().toISOString().split("T")[0];
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
   console.log(`[sync-mlb-data] Starting sync for ${today}`);
 
