@@ -78,23 +78,22 @@ async function fetchGoalieLanding(playerId: number): Promise<any> {
   }
 }
 
-async function fetchTeamPPK(teamAbbr: string): Promise<{ ppPct: number; pkPct: number }> {
+async function fetchAllTeamPPK(season: string): Promise<Record<number, { ppPct: number; pkPct: number }>> {
   try {
-    const data = await get<any>(`/v1/club-stats/${teamAbbr}/now`);
-    // Try various possible field paths
-    const ppPct =
-      data.powerPlayPct ??
-      data.powerPlay?.pct ??
-      data.teamStats?.powerPlayPct ??
-      0;
-    const pkPct =
-      data.penaltyKillPct ??
-      data.penaltyKill?.pct ??
-      data.teamStats?.penaltyKillPct ??
-      0;
-    return { ppPct, pkPct };
+    const url = `https://api.nhle.com/stats/rest/en/team/summary?isAggregate=false&isGame=false&start=0&limit=50&cayenneExp=seasonId%3D${season}%20and%20gameTypeId%3D2`;
+    const res = await fetch(url, { cache: "no-store" });
+    if (!res.ok) return {};
+    const data = await res.json();
+    const map: Record<number, { ppPct: number; pkPct: number }> = {};
+    for (const t of data.data ?? []) {
+      map[t.teamId] = {
+        ppPct: t.powerPlayPct ?? 0,
+        pkPct: t.penaltyKillPct ?? 0,
+      };
+    }
+    return map;
   } catch {
-    return { ppPct: 0, pkPct: 0 };
+    return {};
   }
 }
 
@@ -204,9 +203,25 @@ function buildGoalie(player: RosterPlayer, landing: any): NHLGoalie {
   };
 }
 
+// Fetch items in sequential batches to avoid rate-limiting
+async function batchFetch<T, R>(items: T[], batchSize: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = [];
+  for (let i = 0; i < items.length; i += batchSize) {
+    const chunk = items.slice(i, i + batchSize);
+    const chunkResults = await Promise.all(chunk.map(fn));
+    results.push(...chunkResults);
+  }
+  return results;
+}
+
 export async function buildDailyNHLSnapshot(date: string): Promise<NHLDailySnapshot> {
   const season = getSeason(date);
-  const scheduleGames = await fetchScheduleGames(date);
+
+  // Fetch schedule + all team PP/PK in parallel (2 calls total)
+  const [scheduleGames, teamPPK] = await Promise.all([
+    fetchScheduleGames(date),
+    fetchAllTeamPPK(season),
+  ]);
   const regularGames = scheduleGames.filter((g) => g.gameType === 2);
 
   const games: NHLGame[] = await Promise.all(
@@ -214,20 +229,19 @@ export async function buildDailyNHLSnapshot(date: string): Promise<NHLDailySnaps
       const homeAbbr: string = g.homeTeam.abbrev;
       const awayAbbr: string = g.awayTeam.abbrev;
 
-      const [homeRosterRaw, awayRosterRaw, homeStats, awayStats] = await Promise.all([
+      const [homeRosterRaw, awayRosterRaw] = await Promise.all([
         fetchRoster(homeAbbr),
         fetchRoster(awayAbbr),
-        fetchTeamPPK(homeAbbr),
-        fetchTeamPPK(awayAbbr),
       ]);
 
+      // Batch game log fetches 10 at a time to avoid CloudFlare rate limiting
       const buildSkaters = async (players: RosterPlayer[]): Promise<NHLSkater[]> => {
-        const logs = await Promise.all(players.map((p) => fetchSkaterGameLog(p.id, season)));
+        const logs = await batchFetch(players, 10, (p) => fetchSkaterGameLog(p.id, season));
         return players.map((p, i) => buildSkater(p, logs[i]));
       };
 
       const buildGoalies = async (players: RosterPlayer[]): Promise<NHLGoalie[]> => {
-        const landings = await Promise.all(players.map((p) => fetchGoalieLanding(p.id)));
+        const landings = await batchFetch(players, 5, (p) => fetchGoalieLanding(p.id));
         return players.map((p, i) => buildGoalie(p, landings[i]));
       };
 
@@ -242,6 +256,9 @@ export async function buildDailyNHLSnapshot(date: string): Promise<NHLDailySnaps
         buildSkaters(awayRosterRaw.defensemen),
         buildGoalies(awayRosterRaw.goalies),
       ]);
+
+      const homeStats = teamPPK[g.homeTeam.id] ?? { ppPct: 0, pkPct: 0 };
+      const awayStats = teamPPK[g.awayTeam.id] ?? { ppPct: 0, pkPct: 0 };
 
       const homeTeam: NHLTeam = {
         id: g.homeTeam.id,

@@ -26,9 +26,7 @@ function gameTime(utc: string) {
 
 function pct(val: number) {
   if (!val) return "N/A";
-  // val is 0.0–1.0 or already a percentage
-  const v = val > 1 ? val : val * 100;
-  return `${v.toFixed(1)}%`;
+  return `${(val * 100).toFixed(1)}%`;
 }
 
 function NHLGameCard({ game }: { game: NHLGame }) {

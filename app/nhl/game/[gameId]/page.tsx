@@ -19,8 +19,7 @@ async function getSnapshot(): Promise<NHLDailySnapshot | null> {
 
 function pct(val: number) {
   if (!val) return "N/A";
-  const v = val > 1 ? val : val * 100;
-  return `${v.toFixed(1)}%`;
+  return `${(val * 100).toFixed(1)}%`;
 }
 
 function gameTime(utc: string) {
