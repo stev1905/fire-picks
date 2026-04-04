@@ -4,6 +4,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { DailySnapshot, MLBGame } from "@/types/mlb";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { ChefLoading } from "@/components/ChefLoading";
 
 async function getSnapshot(): Promise<DailySnapshot | null> {
   try {
@@ -112,17 +113,7 @@ export default async function HomePage() {
 
   const snapshot = await getSnapshot();
 
-  if (!snapshot) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center">
-        <div className="text-6xl">⚾</div>
-        <h1 className="text-2xl font-bold">No Data Yet</h1>
-        <p className="text-muted-foreground max-w-sm">
-          The daily sync hasn&apos;t run yet. Data syncs automatically at 9am EST.
-        </p>
-      </div>
-    );
-  }
+  if (!snapshot) return <ChefLoading message="Chefing up today's MLB slate..." />;
 
   return (
     <div className="space-y-6">

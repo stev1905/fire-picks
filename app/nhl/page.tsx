@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import type { NHLDailySnapshot, NHLGame } from "@/types/nhl";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
+import { ChefLoading } from "@/components/ChefLoading";
 
 async function getSnapshot(): Promise<NHLDailySnapshot | null> {
   try {
@@ -88,18 +89,7 @@ export default async function NHLPage() {
   const snapshot = await getSnapshot();
 
   if (!snapshot) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4 text-center">
-        <div className="text-6xl">&#127944;</div>
-        <h1 className="text-2xl font-bold">No NHL Data Yet</h1>
-        <p className="text-muted-foreground max-w-sm text-sm">
-          Sync NHL data by running:<br />
-          <code className="text-xs bg-muted px-2 py-0.5 rounded mt-1 inline-block">
-            curl -X POST https://your-site.netlify.app/.netlify/functions/sync-nhl-data-background
-          </code>
-        </p>
-      </div>
-    );
+    return <ChefLoading message="Chefing up today's NHL slate..." />;
   }
 
   return (

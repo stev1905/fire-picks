@@ -11,6 +11,7 @@ import {
 import { HitterChart } from "@/components/analytics/HitterChart";
 import { HRChart } from "@/components/analytics/HRChart";
 import { PitcherChart } from "@/components/analytics/PitcherChart";
+import { ChefLoading } from "@/components/ChefLoading";
 
 async function getSnapshot(): Promise<DailySnapshot | null> {
   try {
@@ -31,17 +32,7 @@ export default async function AnalyticsPage() {
 
   const snapshot = await getSnapshot();
 
-  if (!snapshot) {
-    return (
-      <div className="flex flex-col items-center justify-center min-h-[60vh] gap-3 text-center">
-        <div className="text-5xl">⚾</div>
-        <h1 className="text-xl font-bold">No Data Yet</h1>
-        <p className="text-muted-foreground text-sm max-w-xs">
-          Data syncs at 9am EST. Check back then for today&apos;s analytics.
-        </p>
-      </div>
-    );
-  }
+  if (!snapshot) return <ChefLoading message="Chefing up today's analytics..." />;
 
   const [hotHitters, coldHitters, hotHR, coldHR, hotPitchers] = [
     getHottestHitters(snapshot),
