@@ -4,7 +4,7 @@ export function ChefLoading({ message = "Chefing up today's data..." }: { messag
       <div className="relative">
         {/* Chef hat */}
         <div className="text-7xl animate-bounce" style={{ animationDuration: "1.2s" }}>
-          👨‍🍳
+          👨🏾‍🍳
         </div>
         {/* Steam puffs */}
         <div className="absolute -top-2 left-1/2 -translate-x-1/2 flex gap-1">
