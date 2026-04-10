@@ -84,9 +84,9 @@ function ScoreBreakdownTooltip({ label, breakdown }: { label: string; breakdown:
                   {c.value ?? "—"}
                 </span>
               </div>
-              <div className="h-1.5 rounded-full bg-current opacity-10">
+              <div className="h-1.5 rounded-full bg-border">
                 <div
-                  className="h-1.5 rounded-full bg-current opacity-60 transition-all"
+                  className="h-1.5 rounded-full bg-primary/70 transition-all"
                   style={{ width: `${Math.round(pct * 100)}%` }}
                 />
               </div>

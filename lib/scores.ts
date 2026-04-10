@@ -93,11 +93,16 @@ export function calcHitScoreBreakdown(
 
   // 5. Park factor (0–7)  range 0.88–1.24
   const park = clamp(((parkFactor - 0.88) / (1.24 - 0.88)) * 7, 7);
+  const parkTier =
+    parkFactor >= 1.10 ? "Very Hitter Friendly" :
+    parkFactor >= 1.04 ? "Hitter Friendly" :
+    parkFactor <= 0.92 ? "Pitcher Friendly" :
+    parkFactor <= 0.96 ? "Slight Pitcher Friendly" : "Neutral";
   components.push({
     label: "Park Factor",
     earned: Math.round(park),
     max: 7,
-    value: parkFactor.toFixed(2),
+    value: `${parkTier} (${parkFactor.toFixed(2)})`,
   });
 
   // 6. Opposing pitcher softness (0–8)
@@ -105,11 +110,15 @@ export function calcHitScoreBreakdown(
   if (pitcher) {
     const softness = Math.max(0, (pitcher.last3HitsAllowed - 4) / 11);
     pitcherScore = clamp(softness * 8, 8);
+    const pitcherTier =
+      pitcher.last3HitsAllowed >= 12 ? "very hittable" :
+      pitcher.last3HitsAllowed >= 8  ? "above avg" :
+      pitcher.last3HitsAllowed >= 5  ? "average" : "tough";
     components.push({
-      label: "Pitcher Hits Allowed (L3)",
+      label: "Pitcher H Allowed (L3 starts)",
       earned: Math.round(pitcherScore),
       max: 8,
-      value: `${pitcher.last3HitsAllowed} hits`,
+      value: `${pitcher.last3HitsAllowed} hits — ${pitcherTier}`,
     });
   }
 
@@ -223,11 +232,16 @@ export function calcHRScoreBreakdown(
 
   // 4. Park factor — critical for HR (0–18)
   const park = clamp(((parkFactor - 0.88) / (1.24 - 0.88)) * 18, 18);
+  const parkTierHR =
+    parkFactor >= 1.10 ? "Very Hitter Friendly" :
+    parkFactor >= 1.04 ? "Hitter Friendly" :
+    parkFactor <= 0.92 ? "Pitcher Friendly" :
+    parkFactor <= 0.96 ? "Slight Pitcher Friendly" : "Neutral";
   components.push({
     label: "Park Factor",
     earned: Math.round(park),
     max: 18,
-    value: parkFactor.toFixed(2),
+    value: `${parkTierHR} (${parkFactor.toFixed(2)})`,
   });
 
   // 5. Recent SLG last 10 (0–8)

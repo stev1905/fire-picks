@@ -35,19 +35,25 @@ export async function fetchStatcastData(season: number): Promise<Map<number, Sta
       ),
     ]);
 
+    const parseCol = (cols: string[], idx: number) =>
+      idx >= 0 ? cols[idx]?.replace(/"/g, "").trim() ?? "" : "";
+
     if (xbaRes.status === "fulfilled" && xbaRes.value.ok) {
       const text = await xbaRes.value.text();
       const lines = text.trim().split("\n");
       const header = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
       const idIdx  = header.indexOf("player_id");
-      const xbaIdx = header.indexOf("est_ba");
-      for (const line of lines.slice(1)) {
-        const cols = line.split(",");
-        const id  = parseInt(cols[idIdx]);
-        const xBA = parseFloat(cols[xbaIdx]);
-        if (!isNaN(id) && !isNaN(xBA)) {
-          const prev = map.get(id) ?? { xBA: 0, barrelPct: 0, hardHitPct: 0 };
-          map.set(id, { ...prev, xBA });
+      // try both known column names
+      const xbaIdx = header.indexOf("est_ba") >= 0 ? header.indexOf("est_ba") : header.indexOf("xba");
+      if (idIdx >= 0 && xbaIdx >= 0) {
+        for (const line of lines.slice(1)) {
+          const cols = line.split(",");
+          const id  = parseInt(parseCol(cols, idIdx));
+          const xBA = parseFloat(parseCol(cols, xbaIdx));
+          if (!isNaN(id) && !isNaN(xBA)) {
+            const prev = map.get(id) ?? { xBA: 0, barrelPct: 0, hardHitPct: 0 };
+            map.set(id, { ...prev, xBA });
+          }
         }
       }
     }
@@ -57,20 +63,22 @@ export async function fetchStatcastData(season: number): Promise<Map<number, Sta
       const lines = text.trim().split("\n");
       const header = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
       const idIdx  = header.indexOf("player_id");
-      const brlIdx = header.indexOf("brl_percent");
-      const evIdx  = header.indexOf("ev95percent");
-      for (const line of lines.slice(1)) {
-        const cols = line.split(",");
-        const id = parseInt(cols[idIdx]);
-        if (isNaN(id)) continue;
-        const barrelPct  = parseFloat(cols[brlIdx]);
-        const hardHitPct = parseFloat(cols[evIdx]);
-        const prev = map.get(id) ?? { xBA: 0, barrelPct: 0, hardHitPct: 0 };
-        map.set(id, {
-          ...prev,
-          barrelPct:  isNaN(barrelPct)  ? prev.barrelPct  : barrelPct,
-          hardHitPct: isNaN(hardHitPct) ? prev.hardHitPct : hardHitPct,
-        });
+      const brlIdx = header.indexOf("brl_percent") >= 0 ? header.indexOf("brl_percent") : header.indexOf("barrel_batted_rate");
+      const evIdx  = header.indexOf("ev95percent") >= 0 ? header.indexOf("ev95percent") : header.indexOf("hard_hit_percent");
+      if (idIdx >= 0) {
+        for (const line of lines.slice(1)) {
+          const cols = line.split(",");
+          const id = parseInt(parseCol(cols, idIdx));
+          if (isNaN(id)) continue;
+          const barrelPct  = brlIdx >= 0 ? parseFloat(parseCol(cols, brlIdx))  : NaN;
+          const hardHitPct = evIdx  >= 0 ? parseFloat(parseCol(cols, evIdx))   : NaN;
+          const prev = map.get(id) ?? { xBA: 0, barrelPct: 0, hardHitPct: 0 };
+          map.set(id, {
+            ...prev,
+            barrelPct:  isNaN(barrelPct)  ? prev.barrelPct  : barrelPct,
+            hardHitPct: isNaN(hardHitPct) ? prev.hardHitPct : hardHitPct,
+          });
+        }
       }
     }
   } catch {
