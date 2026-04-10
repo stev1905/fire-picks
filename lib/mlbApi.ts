@@ -17,6 +17,91 @@ async function get<T>(path: string): Promise<T> {
   return res.json();
 }
 
+// ─── Baseball Savant (Statcast) ────────────────────────────────────────────────
+
+type StatcastEntry = { xBA: number; barrelPct: number; hardHitPct: number };
+
+export async function fetchStatcastData(season: number): Promise<Map<number, StatcastEntry>> {
+  const map = new Map<number, StatcastEntry>();
+  try {
+    const [xbaRes, statcastRes] = await Promise.allSettled([
+      fetch(
+        `https://baseballsavant.mlb.com/leaderboard/expected_statistics?type=batter&year=${season}&position=&team=&min=1&csv=true`,
+        { cache: "no-store" }
+      ),
+      fetch(
+        `https://baseballsavant.mlb.com/leaderboard/statcast?type=batter&year=${season}&position=&team=&min=1&csv=true`,
+        { cache: "no-store" }
+      ),
+    ]);
+
+    if (xbaRes.status === "fulfilled" && xbaRes.value.ok) {
+      const text = await xbaRes.value.text();
+      const lines = text.trim().split("\n");
+      const header = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
+      const idIdx  = header.indexOf("player_id");
+      const xbaIdx = header.indexOf("est_ba");
+      for (const line of lines.slice(1)) {
+        const cols = line.split(",");
+        const id  = parseInt(cols[idIdx]);
+        const xBA = parseFloat(cols[xbaIdx]);
+        if (!isNaN(id) && !isNaN(xBA)) {
+          const prev = map.get(id) ?? { xBA: 0, barrelPct: 0, hardHitPct: 0 };
+          map.set(id, { ...prev, xBA });
+        }
+      }
+    }
+
+    if (statcastRes.status === "fulfilled" && statcastRes.value.ok) {
+      const text = await statcastRes.value.text();
+      const lines = text.trim().split("\n");
+      const header = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
+      const idIdx  = header.indexOf("player_id");
+      const brlIdx = header.indexOf("brl_percent");
+      const evIdx  = header.indexOf("ev95percent");
+      for (const line of lines.slice(1)) {
+        const cols = line.split(",");
+        const id = parseInt(cols[idIdx]);
+        if (isNaN(id)) continue;
+        const barrelPct  = parseFloat(cols[brlIdx]);
+        const hardHitPct = parseFloat(cols[evIdx]);
+        const prev = map.get(id) ?? { xBA: 0, barrelPct: 0, hardHitPct: 0 };
+        map.set(id, {
+          ...prev,
+          barrelPct:  isNaN(barrelPct)  ? prev.barrelPct  : barrelPct,
+          hardHitPct: isNaN(hardHitPct) ? prev.hardHitPct : hardHitPct,
+        });
+      }
+    }
+  } catch {
+    // Statcast is optional — return whatever we have
+  }
+  return map;
+}
+
+// ─── Batter vs Pitcher (career H2H) ───────────────────────────────────────────
+
+export async function fetchBatterVsPitcher(
+  batterId: number,
+  pitcherId: number
+): Promise<MLBBatter["vsCurrentPitcher"] | undefined> {
+  try {
+    const data = await get<any>(
+      `/people/${batterId}/stats?stats=vsPlayerTotal&group=hitting&sportId=1&opposingPlayerId=${pitcherId}`
+    );
+    const stat = data.stats?.[0]?.splits?.[0]?.stat;
+    if (!stat || (stat.atBats ?? 0) === 0) return undefined;
+    return {
+      atBats: stat.atBats ?? 0,
+      hits:   stat.hits ?? 0,
+      avg:    parseFloat(stat.avg ?? "0"),
+      hr:     stat.homeRuns ?? 0,
+    };
+  } catch {
+    return undefined;
+  }
+}
+
 // ─── Schedule ─────────────────────────────────────────────────────────────────
 
 export async function fetchSchedule(date: string): Promise<{ gamePk: number; venueId: number; homeTeam: MLBTeam; awayTeam: MLBTeam; status: string; gameDate: string }[]> {
@@ -282,18 +367,21 @@ export async function fetchPitcherStats(playerId: number, season: number): Promi
 
 export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
   const season = new Date(date).getFullYear();
-  const scheduleItems = await fetchSchedule(date);
+
+  // Fetch schedule + Statcast leaderboards in parallel (Statcast is one-time for the whole snapshot)
+  const [scheduleItems, statcastMap] = await Promise.all([
+    fetchSchedule(date),
+    fetchStatcastData(season),
+  ]);
 
   const games: MLBGame[] = await Promise.all(
     scheduleItems.map(async (item) => {
       const { homeLineup, awayLineup, homePitcherId, awayPitcherId } = await fetchBoxscore(item.gamePk);
       const parkInfo = getParkFactor(item.venueId);
 
-      // Fetch all player stats in parallel
-      const allBatterIds = [
-        ...homeLineup.map((p) => p.id),
-        ...awayLineup.map((p) => p.id),
-      ];
+      const homeBatterIds = homeLineup.map((p) => p.id);
+      const awayBatterIds = awayLineup.map((p) => p.id);
+      const allBatterIds  = [...homeBatterIds, ...awayBatterIds];
 
       const [batterStatsArr, homePitcherStats, awayPitcherStats] = await Promise.all([
         Promise.all(allBatterIds.map((id) => fetchBatterStats(id, season))),
@@ -302,7 +390,31 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
       ]);
 
       const batterStatsMap: Record<number, Partial<MLBBatter>> = {};
-      allBatterIds.forEach((id, i) => { batterStatsMap[id] = batterStatsArr[i]; });
+      allBatterIds.forEach((id, i) => {
+        batterStatsMap[id] = {
+          ...batterStatsArr[i],
+          // Merge Statcast data when available
+          ...(statcastMap.has(id) ? statcastMap.get(id)! : {}),
+        };
+      });
+
+      // Fetch career H2H: home batters vs away pitcher, away batters vs home pitcher
+      const h2hFetches = [
+        ...homeBatterIds.map((id) =>
+          awayPitcherId
+            ? fetchBatterVsPitcher(id, awayPitcherId).then((r) => ({ id, r }))
+            : Promise.resolve({ id, r: undefined as MLBBatter["vsCurrentPitcher"] })
+        ),
+        ...awayBatterIds.map((id) =>
+          homePitcherId
+            ? fetchBatterVsPitcher(id, homePitcherId).then((r) => ({ id, r }))
+            : Promise.resolve({ id, r: undefined as MLBBatter["vsCurrentPitcher"] })
+        ),
+      ];
+      const h2hResults = await Promise.all(h2hFetches);
+      for (const { id, r } of h2hResults) {
+        if (r) batterStatsMap[id] = { ...batterStatsMap[id], vsCurrentPitcher: r };
+      }
 
       const buildBatter = (p: { id: number; name: string; position: string; battingOrder: number }): MLBBatter => ({
         id: p.id,

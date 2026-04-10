@@ -73,6 +73,17 @@ export interface MLBBatter {
   slgVsRight: number;
   // Game logs for charts
   last10Games: BatterGameLog[];
+  // Statcast (Baseball Savant)
+  xBA?: number;
+  barrelPct?: number;
+  hardHitPct?: number;
+  // Career head-to-head vs opposing pitcher
+  vsCurrentPitcher?: {
+    atBats: number;
+    hits: number;
+    avg: number;
+    hr: number;
+  };
 }
 
 export interface BatterGameLog {

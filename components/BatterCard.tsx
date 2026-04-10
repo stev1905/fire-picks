@@ -34,6 +34,17 @@ function matchupBadge(batter: MLBBatter, pitcher?: MLBPitcher) {
   return { label: `${avgStr} vs ${hand}`, color: "bg-muted text-muted-foreground" };
 }
 
+function h2hBadge(batter: MLBBatter) {
+  const h2h = batter.vsCurrentPitcher;
+  if (!h2h || h2h.atBats === 0) return null;
+  const avgStr = h2h.avg.toFixed(3).replace(/^0/, "");
+  const label = `H2H: ${avgStr} (${h2h.hits}/${h2h.atBats})`;
+  if (h2h.atBats < 5) return { label, color: "bg-muted/60 text-muted-foreground" };
+  if (h2h.avg >= 0.300) return { label, color: "bg-blue-500/80 text-white" };
+  if (h2h.avg <= 0.180) return { label, color: "bg-orange-500/80 text-white" };
+  return { label, color: "bg-muted text-muted-foreground" };
+}
+
 function StatBox({ label, value, highlight }: { label: string; value: string; highlight?: boolean }) {
   return (
     <div className={`flex flex-col items-center p-1 rounded ${highlight ? "bg-secondary" : "bg-muted"}`}>
@@ -56,24 +67,26 @@ function WindowStats({ label, v3, v6, v10 }: { label: string; v3: number; v6: nu
 
 function ScoreBreakdownTooltip({ label, breakdown }: { label: string; breakdown: ScoreBreakdown }) {
   return (
-    <div className="min-w-[190px] space-y-2">
+    <div className="min-w-[230px] space-y-2">
       <div className="flex items-center justify-between">
         <span className="font-bold text-sm">{label} Score</span>
-        <span className="font-black text-lg tabular-nums">{breakdown.total}</span>
+        <span className="font-black text-lg tabular-nums">{breakdown.total} / 100</span>
       </div>
       <div className="h-px bg-current opacity-20" />
-      <div className="space-y-1">
+      <div className="space-y-2">
         {breakdown.components.map((c) => {
-          const pct = c.earned / c.max;
+          const pct = c.max > 0 ? c.earned / c.max : 0;
           return (
             <div key={c.label} className="space-y-0.5">
-              <div className="flex justify-between text-[11px]">
-                <span className="opacity-75">{c.label}</span>
-                <span className="font-mono opacity-90">{c.earned} / {c.max}</span>
+              <div className="flex justify-between items-baseline text-[11px] gap-2">
+                <span className="opacity-60 shrink-0">{c.label}</span>
+                <span className="font-mono font-semibold tabular-nums">
+                  {c.value ?? "—"}
+                </span>
               </div>
-              <div className="h-1 rounded-full bg-current opacity-15">
+              <div className="h-1.5 rounded-full bg-current opacity-10">
                 <div
-                  className="h-1 rounded-full bg-current opacity-70 transition-all"
+                  className="h-1.5 rounded-full bg-current opacity-60 transition-all"
                   style={{ width: `${Math.round(pct * 100)}%` }}
                 />
               </div>
@@ -130,6 +143,8 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0 }: Props)
   const hitBreakdown = calcHitScoreBreakdown(batter, opposingPitcher, parkFactor);
   const hrBreakdown  = calcHRScoreBreakdown(batter, opposingPitcher, parkFactor);
   const matchup      = matchupBadge(batter, opposingPitcher);
+  const h2h          = h2hBadge(batter);
+  const hasStatcast  = batter.xBA !== undefined || batter.barrelPct !== undefined || batter.hardHitPct !== undefined;
 
   const chartData = [...batter.last10Games].reverse().map((g, i) => ({
     name: `G${i + 1}`,
@@ -173,14 +188,21 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0 }: Props)
           </div>
 
           {/* Score pills + matchup badge */}
-          <div className="flex items-center gap-2 mt-1.5">
+          <div className="flex items-center gap-2 mt-1.5 flex-wrap">
             <ScorePill label="HIT" breakdown={hitBreakdown} />
             <ScorePill label="HR"  breakdown={hrBreakdown} />
-            {matchup && (
-              <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ml-auto shrink-0 ${matchup.color}`}>
-                {matchup.label}
-              </span>
-            )}
+            <div className="flex flex-wrap gap-1 ml-auto">
+              {matchup && (
+                <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${matchup.color}`}>
+                  {matchup.label}
+                </span>
+              )}
+              {h2h && (
+                <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${h2h.color}`}>
+                  {h2h.label}
+                </span>
+              )}
+            </div>
           </div>
         </CardHeader>
 
@@ -189,7 +211,7 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0 }: Props)
             Score factors
           </div>
 
-          {/* Season + splits — vsL/vsR renamed to vsLHP/vsRHP */}
+          {/* Season + splits */}
           <div className="grid grid-cols-5 gap-1">
             <StatBox label="AVG"   value={stat(batter.seasonAVG)} highlight />
             <StatBox label="SLG"   value={stat(batter.seasonSLG)} highlight />
@@ -197,6 +219,15 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0 }: Props)
             <StatBox label="vsLHP" value={stat(batter.avgVsLeft)} />
             <StatBox label="vsRHP" value={stat(batter.avgVsRight)} />
           </div>
+
+          {/* Statcast row */}
+          {hasStatcast && (
+            <div className="grid grid-cols-3 gap-1">
+              <StatBox label="xBA"    value={batter.xBA     !== undefined ? stat(batter.xBA)                         : "—"} />
+              <StatBox label="Brl%"   value={batter.barrelPct  !== undefined ? `${batter.barrelPct.toFixed(1)}%`  : "—"} />
+              <StatBox label="HH%"    value={batter.hardHitPct !== undefined ? `${batter.hardHitPct.toFixed(1)}%` : "—"} />
+            </div>
+          )}
 
           {/* Rolling windows */}
           <div className="space-y-0.5">
