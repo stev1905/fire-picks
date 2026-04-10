@@ -2,10 +2,16 @@
 
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import type { MLBBatter, MLBPitcher } from "@/types/mlb";
-import { calcHitScore, calcHRScore, scoreBadgeClass } from "@/lib/scores";
 import {
-  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  Tooltip, TooltipTrigger, TooltipContent, TooltipProvider,
+} from "@/components/ui/tooltip";
+import type { MLBBatter, MLBPitcher } from "@/types/mlb";
+import {
+  calcHitScoreBreakdown, calcHRScoreBreakdown,
+  scoreBadgeClass, type ScoreBreakdown,
+} from "@/lib/scores";
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip as ChartTooltip, ResponsiveContainer,
 } from "recharts";
 
 interface Props {
@@ -48,18 +54,63 @@ function WindowStats({ label, v3, v6, v10 }: { label: string; v3: number; v6: nu
   );
 }
 
-function ScorePill({ label, score }: { label: string; score: number }) {
+function ScoreBreakdownTooltip({ label, breakdown }: { label: string; breakdown: ScoreBreakdown }) {
   return (
-    <div className={`flex flex-col items-center px-2.5 py-1 rounded-lg ${scoreBadgeClass(score)}`}>
-      <span className="text-[8px] uppercase tracking-widest font-semibold leading-none opacity-80">
-        {label}
-      </span>
-      <span className="text-lg font-black leading-tight tabular-nums">{score}</span>
+    <div className="min-w-[190px] space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="font-bold text-sm">{label} Score</span>
+        <span className="font-black text-lg tabular-nums">{breakdown.total}</span>
+      </div>
+      <div className="h-px bg-current opacity-20" />
+      <div className="space-y-1">
+        {breakdown.components.map((c) => {
+          const pct = c.earned / c.max;
+          return (
+            <div key={c.label} className="space-y-0.5">
+              <div className="flex justify-between text-[11px]">
+                <span className="opacity-75">{c.label}</span>
+                <span className="font-mono opacity-90">{c.earned} / {c.max}</span>
+              </div>
+              <div className="h-1 rounded-full bg-current opacity-15">
+                <div
+                  className="h-1 rounded-full bg-current opacity-70 transition-all"
+                  style={{ width: `${Math.round(pct * 100)}%` }}
+                />
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }
 
-const CustomTooltip = ({ active, payload, label }: any) => {
+function ScorePill({
+  label, breakdown,
+}: {
+  label: string;
+  breakdown: ScoreBreakdown;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={<div />}>
+        <div
+          className={`flex flex-col items-center px-2.5 py-1 rounded-lg cursor-default ${scoreBadgeClass(breakdown.total)}`}
+        >
+          <span className="text-[8px] uppercase tracking-widest font-semibold leading-none opacity-80">
+            {label}
+          </span>
+          <span className="text-lg font-black leading-tight tabular-nums">{breakdown.total}</span>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="max-w-none p-3">
+        <ScoreBreakdownTooltip label={label} breakdown={breakdown} />
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+const ChartTooltipContent = ({ active, payload, label }: any) => {
   if (active && payload?.length) {
     return (
       <div className="bg-card border border-border rounded-lg p-2 text-xs shadow-lg">
@@ -76,9 +127,9 @@ const CustomTooltip = ({ active, payload, label }: any) => {
 };
 
 export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0 }: Props) {
-  const hitScore = calcHitScore(batter, opposingPitcher, parkFactor);
-  const hrScore  = calcHRScore(batter, opposingPitcher, parkFactor);
-  const matchup  = matchupBadge(batter, opposingPitcher);
+  const hitBreakdown = calcHitScoreBreakdown(batter, opposingPitcher, parkFactor);
+  const hrBreakdown  = calcHRScoreBreakdown(batter, opposingPitcher, parkFactor);
+  const matchup      = matchupBadge(batter, opposingPitcher);
 
   const chartData = [...batter.last10Games].reverse().map((g, i) => ({
     name: `G${i + 1}`,
@@ -95,96 +146,97 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0 }: Props)
     : { color: "text-muted-foreground", icon: null };
 
   return (
-    <Card>
-      <CardHeader className="pb-1.5 pt-2 px-2">
-        {/* Player name + badges */}
-        <div className="flex items-center gap-1 flex-wrap">
-          <span className="text-[10px] text-muted-foreground font-mono">#{batter.battingOrder}</span>
-          <span className="font-semibold text-xs truncate">{batter.name}</span>
-          <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">{batter.hand}</Badge>
-          <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">{batter.position}</Badge>
-        </div>
-
-        {/* Streak + hit rate */}
-        <div className="flex flex-wrap gap-x-2 mt-0.5">
-          {batter.hittingStreak > 0 && (
-            <span className="text-[10px] text-amber-500 dark:text-amber-400">
-              🔥 {batter.hittingStreak}-game streak
-            </span>
-          )}
-          {hasLast10 && (
-            <span className={`text-[10px] ${hitLabel.color}`}>
-              {hitLabel.icon && <span className="mr-0.5">{hitLabel.icon}</span>}
-              {hitsIn10}/{batter.last10Games.length} w/hit
-            </span>
-          )}
-        </div>
-
-        {/* Score pills + matchup badge */}
-        <div className="flex items-center gap-2 mt-1.5">
-          <ScorePill label="HIT" score={hitScore} />
-          <ScorePill label="HR"  score={hrScore} />
-          {matchup && (
-            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ml-auto shrink-0 ${matchup.color}`}>
-              {matchup.label}
-            </span>
-          )}
-        </div>
-      </CardHeader>
-
-      <CardContent className="space-y-1.5 px-2 pb-2">
-        {/* Divider label */}
-        <div className="text-[8px] text-muted-foreground/50 uppercase tracking-widest">
-          Score factors
-        </div>
-
-        {/* Season + splits */}
-        <div className="grid grid-cols-5 gap-1">
-          <StatBox label="AVG" value={stat(batter.seasonAVG)} highlight />
-          <StatBox label="SLG" value={stat(batter.seasonSLG)} highlight />
-          <StatBox label="HR"  value={String(batter.seasonHR)} highlight />
-          <StatBox label="vsL" value={stat(batter.avgVsLeft)} />
-          <StatBox label="vsR" value={stat(batter.avgVsRight)} />
-        </div>
-
-        {/* Rolling windows */}
-        <div className="space-y-0.5">
-          <WindowStats label="AVG" v3={batter.last3AVG} v6={batter.last6AVG} v10={batter.last10AVG} />
-          <WindowStats label="SLG" v3={batter.last3SLG} v6={batter.last6SLG} v10={batter.last10SLG} />
-          <WindowStats label="HR"  v3={batter.last3HR}  v6={batter.last6HR}  v10={batter.last10HR} />
-        </div>
-
-        {/* Trend chart — desktop only */}
-        {chartData.length > 0 && (
-          <div className="hidden sm:block pt-0.5">
-            <div className="text-[9px] text-muted-foreground mb-0.5 uppercase tracking-wide">
-              Last 10 Trend
-            </div>
-            <ResponsiveContainer width="100%" height={55}>
-              <LineChart data={chartData}>
-                <XAxis
-                  dataKey="name"
-                  tick={{ fontSize: 8, fill: "var(--muted-foreground)" }}
-                  axisLine={false}
-                  tickLine={false}
-                />
-                <YAxis hide domain={[0, "auto"]} />
-                <Tooltip content={<CustomTooltip />} />
-                <Line type="monotone" dataKey="AVG" stroke="#60a5fa" strokeWidth={1.5} dot={false} />
-                <Line type="monotone" dataKey="SLG" stroke="#a78bfa" strokeWidth={1.5} dot={false} />
-              </LineChart>
-            </ResponsiveContainer>
-            <div className="flex gap-3 text-[9px] text-muted-foreground">
-              <span className="flex items-center gap-1">
-                <span className="w-3 h-px bg-blue-400 inline-block" /> AVG
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="w-3 h-px bg-violet-400 inline-block" /> SLG
-              </span>
-            </div>
+    <TooltipProvider>
+      <Card>
+        <CardHeader className="pb-1.5 pt-2 px-2">
+          {/* Player name + badges */}
+          <div className="flex items-center gap-1 flex-wrap">
+            <span className="text-[10px] text-muted-foreground font-mono">#{batter.battingOrder}</span>
+            <span className="font-semibold text-xs truncate">{batter.name}</span>
+            <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">{batter.hand}</Badge>
+            <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">{batter.position}</Badge>
           </div>
-        )}
-      </CardContent>
-    </Card>
+
+          {/* Streak + hit rate */}
+          <div className="flex flex-wrap gap-x-2 mt-0.5">
+            {batter.hittingStreak > 0 && (
+              <span className="text-[10px] text-amber-500 dark:text-amber-400">
+                🔥 {batter.hittingStreak}-game streak
+              </span>
+            )}
+            {hasLast10 && (
+              <span className={`text-[10px] ${hitLabel.color}`}>
+                {hitLabel.icon && <span className="mr-0.5">{hitLabel.icon}</span>}
+                {hitsIn10}/{batter.last10Games.length} w/hit
+              </span>
+            )}
+          </div>
+
+          {/* Score pills + matchup badge */}
+          <div className="flex items-center gap-2 mt-1.5">
+            <ScorePill label="HIT" breakdown={hitBreakdown} />
+            <ScorePill label="HR"  breakdown={hrBreakdown} />
+            {matchup && (
+              <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ml-auto shrink-0 ${matchup.color}`}>
+                {matchup.label}
+              </span>
+            )}
+          </div>
+        </CardHeader>
+
+        <CardContent className="space-y-1.5 px-2 pb-2">
+          <div className="text-[8px] text-muted-foreground/50 uppercase tracking-widest">
+            Score factors
+          </div>
+
+          {/* Season + splits — vsL/vsR renamed to vsLHP/vsRHP */}
+          <div className="grid grid-cols-5 gap-1">
+            <StatBox label="AVG"   value={stat(batter.seasonAVG)} highlight />
+            <StatBox label="SLG"   value={stat(batter.seasonSLG)} highlight />
+            <StatBox label="HR"    value={String(batter.seasonHR)} highlight />
+            <StatBox label="vsLHP" value={stat(batter.avgVsLeft)} />
+            <StatBox label="vsRHP" value={stat(batter.avgVsRight)} />
+          </div>
+
+          {/* Rolling windows */}
+          <div className="space-y-0.5">
+            <WindowStats label="AVG" v3={batter.last3AVG} v6={batter.last6AVG} v10={batter.last10AVG} />
+            <WindowStats label="SLG" v3={batter.last3SLG} v6={batter.last6SLG} v10={batter.last10SLG} />
+            <WindowStats label="HR"  v3={batter.last3HR}  v6={batter.last6HR}  v10={batter.last10HR} />
+          </div>
+
+          {/* Trend chart — desktop only */}
+          {chartData.length > 0 && (
+            <div className="hidden sm:block pt-0.5">
+              <div className="text-[9px] text-muted-foreground mb-0.5 uppercase tracking-wide">
+                Last 10 Trend
+              </div>
+              <ResponsiveContainer width="100%" height={55}>
+                <LineChart data={chartData}>
+                  <XAxis
+                    dataKey="name"
+                    tick={{ fontSize: 8, fill: "var(--muted-foreground)" }}
+                    axisLine={false}
+                    tickLine={false}
+                  />
+                  <YAxis hide domain={[0, "auto"]} />
+                  <ChartTooltip content={<ChartTooltipContent />} />
+                  <Line type="monotone" dataKey="AVG" stroke="#60a5fa" strokeWidth={1.5} dot={false} />
+                  <Line type="monotone" dataKey="SLG" stroke="#a78bfa" strokeWidth={1.5} dot={false} />
+                </LineChart>
+              </ResponsiveContainer>
+              <div className="flex gap-3 text-[9px] text-muted-foreground">
+                <span className="flex items-center gap-1">
+                  <span className="w-3 h-px bg-blue-400 inline-block" /> AVG
+                </span>
+                <span className="flex items-center gap-1">
+                  <span className="w-3 h-px bg-violet-400 inline-block" /> SLG
+                </span>
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+    </TooltipProvider>
   );
 }
