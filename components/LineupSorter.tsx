@@ -4,9 +4,12 @@ import { useState } from "react";
 import { BatterCard } from "@/components/BatterCard";
 import { Badge } from "@/components/ui/badge";
 import type { MLBBatter, MLBPitcher } from "@/types/mlb";
+import { calcHitScore, calcHRScore } from "@/lib/scores";
 
 type SortKey =
   | "batting-order"
+  | "hit-score"
+  | "hr-score"
   | "streak"
   | "avg-l3"
   | "avg-l6"
@@ -18,6 +21,8 @@ type SortKey =
 
 const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: "batting-order", label: "Batting Order" },
+  { value: "hit-score",     label: "⚡ Hit Score" },
+  { value: "hr-score",      label: "💥 HR Score" },
   { value: "streak",        label: "Hit Streak" },
   { value: "avg-l3",        label: "AVG Last 3" },
   { value: "avg-l6",        label: "AVG Last 6" },
@@ -28,10 +33,17 @@ const SORT_OPTIONS: { value: SortKey; label: string }[] = [
   { value: "vs-pitcher",    label: "AVG vs Pitcher" },
 ];
 
-function sortBatters(batters: MLBBatter[], key: SortKey, pitcher?: MLBPitcher): MLBBatter[] {
+function sortBatters(
+  batters: MLBBatter[],
+  key: SortKey,
+  pitcher?: MLBPitcher,
+  parkFactor = 1.0
+): MLBBatter[] {
   const s = [...batters];
   switch (key) {
     case "batting-order": return s.sort((a, b) => a.battingOrder - b.battingOrder);
+    case "hit-score":     return s.sort((a, b) => calcHitScore(b, pitcher, parkFactor) - calcHitScore(a, pitcher, parkFactor));
+    case "hr-score":      return s.sort((a, b) => calcHRScore(b, pitcher, parkFactor)  - calcHRScore(a, pitcher, parkFactor));
     case "streak":        return s.sort((a, b) => b.hittingStreak - a.hittingStreak);
     case "avg-l3":        return s.sort((a, b) => b.last3AVG - a.last3AVG);
     case "avg-l6":        return s.sort((a, b) => b.last6AVG - a.last6AVG);
@@ -53,10 +65,11 @@ function sortBatters(batters: MLBBatter[], key: SortKey, pitcher?: MLBPitcher): 
 interface Props {
   lineup: MLBBatter[];
   opposingPitcher?: MLBPitcher;
+  parkFactor?: number;
 }
 
-export function LineupSorter({ lineup, opposingPitcher }: Props) {
-  const [sortKey, setSortKey] = useState<SortKey>("batting-order");
+export function LineupSorter({ lineup, opposingPitcher, parkFactor = 1.0 }: Props) {
+  const [sortKey, setSortKey] = useState<SortKey>("hit-score");
 
   if (lineup.length === 0) {
     return (
@@ -66,7 +79,7 @@ export function LineupSorter({ lineup, opposingPitcher }: Props) {
     );
   }
 
-  const sorted = sortBatters(lineup, sortKey, opposingPitcher);
+  const sorted = sortBatters(lineup, sortKey, opposingPitcher, parkFactor);
 
   return (
     <div className="space-y-3">
@@ -81,7 +94,6 @@ export function LineupSorter({ lineup, opposingPitcher }: Props) {
         </div>
       )}
 
-      {/* Sort control */}
       <div className="flex items-center gap-2">
         <span className="text-[11px] text-muted-foreground uppercase tracking-wide shrink-0">Sort</span>
         <select
@@ -90,16 +102,19 @@ export function LineupSorter({ lineup, opposingPitcher }: Props) {
           className="text-xs bg-muted border border-border rounded-md px-2 py-1 text-foreground focus:outline-none focus:ring-1 focus:ring-primary"
         >
           {SORT_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
+            <option key={o.value} value={o.value}>{o.label}</option>
           ))}
         </select>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-2">
         {sorted.map((batter) => (
-          <BatterCard key={batter.id} batter={batter} opposingPitcher={opposingPitcher} />
+          <BatterCard
+            key={batter.id}
+            batter={batter}
+            opposingPitcher={opposingPitcher}
+            parkFactor={parkFactor}
+          />
         ))}
       </div>
     </div>

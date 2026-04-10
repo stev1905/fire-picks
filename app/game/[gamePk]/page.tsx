@@ -144,6 +144,7 @@ export default async function GamePage({
           <LineupSorter
             lineup={game.awayLineup}
             opposingPitcher={game.homeStartingPitcher}
+            parkFactor={game.parkFactor}
           />
         </TabsContent>
 
@@ -151,6 +152,7 @@ export default async function GamePage({
           <LineupSorter
             lineup={game.homeLineup}
             opposingPitcher={game.awayStartingPitcher}
+            parkFactor={game.parkFactor}
           />
         </TabsContent>
 

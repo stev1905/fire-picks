@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { MLBBatter, MLBPitcher } from "@/types/mlb";
+import { calcHitScore, calcHRScore, scoreBadgeClass } from "@/lib/scores";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
 } from "recharts";
@@ -10,13 +11,14 @@ import {
 interface Props {
   batter: MLBBatter;
   opposingPitcher?: MLBPitcher;
+  parkFactor?: number;
 }
 
-function stat(value: number, decimals = 3) {
-  return value.toFixed(decimals).replace(/^0/, "");
+function stat(value: number) {
+  return value.toFixed(3).replace(/^0/, "");
 }
 
-function matchupRating(batter: MLBBatter, pitcher?: MLBPitcher) {
+function matchupBadge(batter: MLBBatter, pitcher?: MLBPitcher) {
   if (!pitcher) return null;
   const avg = pitcher.hand === "L" ? batter.avgVsLeft : batter.avgVsRight;
   const avgStr = avg.toFixed(3).replace(/^0/, "");
@@ -39,9 +41,20 @@ function WindowStats({ label, v3, v6, v10 }: { label: string; v3: number; v6: nu
   return (
     <div className="grid grid-cols-4 gap-1 items-center">
       <div className="text-[9px] text-muted-foreground uppercase tracking-wide">{label}</div>
-      <StatBox label="L3" value={label === "HR" ? String(v3) : stat(v3)} />
-      <StatBox label="L6" value={label === "HR" ? String(v6) : stat(v6)} />
+      <StatBox label="L3"  value={label === "HR" ? String(v3) : stat(v3)} />
+      <StatBox label="L6"  value={label === "HR" ? String(v6) : stat(v6)} />
       <StatBox label="L10" value={label === "HR" ? String(v10) : stat(v10)} />
+    </div>
+  );
+}
+
+function ScorePill({ label, score }: { label: string; score: number }) {
+  return (
+    <div className={`flex flex-col items-center px-2.5 py-1 rounded-lg ${scoreBadgeClass(score)}`}>
+      <span className="text-[8px] uppercase tracking-widest font-semibold leading-none opacity-80">
+        {label}
+      </span>
+      <span className="text-lg font-black leading-tight tabular-nums">{score}</span>
     </div>
   );
 }
@@ -62,49 +75,57 @@ const CustomTooltip = ({ active, payload, label }: any) => {
   return null;
 };
 
-export function BatterCard({ batter, opposingPitcher }: Props) {
-  const matchup = matchupRating(batter, opposingPitcher);
+export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0 }: Props) {
+  const hitScore = calcHitScore(batter, opposingPitcher, parkFactor);
+  const hrScore  = calcHRScore(batter, opposingPitcher, parkFactor);
+  const matchup  = matchupBadge(batter, opposingPitcher);
+
   const chartData = [...batter.last10Games].reverse().map((g, i) => ({
     name: `G${i + 1}`,
     AVG: g.avg,
     SLG: g.slg,
   }));
 
-  const hitsIn10 = batter.last10Games.filter((g) => g.hits > 0).length;
+  const hitsIn10  = batter.last10Games.filter((g) => g.hits > 0).length;
   const hasLast10 = batter.last10Games.length > 0;
-  const hitLabel =
-    hitsIn10 <= 2 ? { color: "text-red-500 dark:text-red-400", icon: "🧊" }
+  const hitLabel  =
+    hitsIn10 <= 2 ? { color: "text-red-500 dark:text-red-400",    icon: "🧊" }
     : hitsIn10 <= 4 ? { color: "text-orange-500 dark:text-orange-400", icon: "❄️" }
-    : hitsIn10 >= 8 ? { color: "text-green-500 dark:text-green-400", icon: "🔥" }
+    : hitsIn10 >= 8 ? { color: "text-green-500 dark:text-green-400",   icon: "🔥" }
     : { color: "text-muted-foreground", icon: null };
 
   return (
     <Card>
       <CardHeader className="pb-1.5 pt-2 px-2">
-        <div className="flex items-start justify-between gap-1">
-          <div className="min-w-0">
-            <div className="flex items-center gap-1 flex-wrap">
-              <span className="text-[10px] text-muted-foreground font-mono">#{batter.battingOrder}</span>
-              <span className="font-semibold text-xs truncate">{batter.name}</span>
-              <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">{batter.hand}</Badge>
-              <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">{batter.position}</Badge>
-            </div>
-            <div className="flex flex-wrap gap-x-2 mt-0.5">
-              {batter.hittingStreak > 0 && (
-                <div className="text-[10px] text-amber-500 dark:text-amber-400">
-                  🔥 {batter.hittingStreak}-game streak
-                </div>
-              )}
-              {hasLast10 && (
-                <div className={`text-[10px] ${hitLabel.color}`}>
-                  {hitLabel.icon && <span className="mr-0.5">{hitLabel.icon}</span>}
-                  {hitsIn10}/{batter.last10Games.length} w/hit
-                </div>
-              )}
-            </div>
-          </div>
+        {/* Player name + badges */}
+        <div className="flex items-center gap-1 flex-wrap">
+          <span className="text-[10px] text-muted-foreground font-mono">#{batter.battingOrder}</span>
+          <span className="font-semibold text-xs truncate">{batter.name}</span>
+          <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">{batter.hand}</Badge>
+          <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">{batter.position}</Badge>
+        </div>
+
+        {/* Streak + hit rate */}
+        <div className="flex flex-wrap gap-x-2 mt-0.5">
+          {batter.hittingStreak > 0 && (
+            <span className="text-[10px] text-amber-500 dark:text-amber-400">
+              🔥 {batter.hittingStreak}-game streak
+            </span>
+          )}
+          {hasLast10 && (
+            <span className={`text-[10px] ${hitLabel.color}`}>
+              {hitLabel.icon && <span className="mr-0.5">{hitLabel.icon}</span>}
+              {hitsIn10}/{batter.last10Games.length} w/hit
+            </span>
+          )}
+        </div>
+
+        {/* Score pills + matchup badge */}
+        <div className="flex items-center gap-2 mt-1.5">
+          <ScorePill label="HIT" score={hitScore} />
+          <ScorePill label="HR"  score={hrScore} />
           {matchup && (
-            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${matchup.color}`}>
+            <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ml-auto shrink-0 ${matchup.color}`}>
               {matchup.label}
             </span>
           )}
@@ -112,6 +133,11 @@ export function BatterCard({ batter, opposingPitcher }: Props) {
       </CardHeader>
 
       <CardContent className="space-y-1.5 px-2 pb-2">
+        {/* Divider label */}
+        <div className="text-[8px] text-muted-foreground/50 uppercase tracking-widest">
+          Score factors
+        </div>
+
         {/* Season + splits */}
         <div className="grid grid-cols-5 gap-1">
           <StatBox label="AVG" value={stat(batter.seasonAVG)} highlight />
