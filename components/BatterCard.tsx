@@ -1,10 +1,8 @@
 "use client";
 
+import { useState } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
-import {
-  Tooltip, TooltipTrigger, TooltipContent, TooltipProvider,
-} from "@/components/ui/tooltip";
 import type { MLBBatter, MLBPitcher } from "@/types/mlb";
 import {
   calcHitScoreBreakdown, calcHRScoreBreakdown,
@@ -99,27 +97,23 @@ function ScoreBreakdownTooltip({ label, breakdown }: { label: string; breakdown:
 }
 
 function ScorePill({
-  label, breakdown,
+  label, breakdown, active, onToggle,
 }: {
   label: string;
   breakdown: ScoreBreakdown;
+  active: boolean;
+  onToggle: () => void;
 }) {
   return (
-    <Tooltip>
-      <TooltipTrigger render={<div />}>
-        <div
-          className={`flex flex-col items-center px-2.5 py-1 rounded-lg cursor-default ${scoreBadgeClass(breakdown.total)}`}
-        >
-          <span className="text-[8px] uppercase tracking-widest font-semibold leading-none opacity-80">
-            {label}
-          </span>
-          <span className="text-lg font-black leading-tight tabular-nums">{breakdown.total}</span>
-        </div>
-      </TooltipTrigger>
-      <TooltipContent side="bottom" className="max-w-none p-3">
-        <ScoreBreakdownTooltip label={label} breakdown={breakdown} />
-      </TooltipContent>
-    </Tooltip>
+    <button
+      onClick={onToggle}
+      className={`flex flex-col items-center px-2.5 py-1 rounded-lg cursor-pointer select-none transition-opacity ${scoreBadgeClass(breakdown.total)} ${active ? "ring-2 ring-current ring-offset-1" : ""}`}
+    >
+      <span className="text-[8px] uppercase tracking-widest font-semibold leading-none opacity-80">
+        {label}
+      </span>
+      <span className="text-lg font-black leading-tight tabular-nums">{breakdown.total}</span>
+    </button>
   );
 }
 
@@ -140,11 +134,16 @@ const ChartTooltipContent = ({ active, payload, label }: any) => {
 };
 
 export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0 }: Props) {
+  const [expandedPill, setExpandedPill] = useState<"HIT" | "HR" | null>(null);
+
   const hitBreakdown = calcHitScoreBreakdown(batter, opposingPitcher, parkFactor);
   const hrBreakdown  = calcHRScoreBreakdown(batter, opposingPitcher, parkFactor);
   const matchup      = matchupBadge(batter, opposingPitcher);
   const h2h          = h2hBadge(batter);
   const hasStatcast  = batter.xBA !== undefined || batter.barrelPct !== undefined || batter.hardHitPct !== undefined;
+
+  const togglePill = (pill: "HIT" | "HR") =>
+    setExpandedPill((prev) => (prev === pill ? null : pill));
 
   const chartData = [...batter.last10Games].reverse().map((g, i) => ({
     name: `G${i + 1}`,
@@ -161,8 +160,7 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0 }: Props)
     : { color: "text-muted-foreground", icon: null };
 
   return (
-    <TooltipProvider>
-      <Card>
+    <Card>
         <CardHeader className="pb-1.5 pt-2 px-2">
           {/* Player name + badges */}
           <div className="flex items-center gap-1 flex-wrap">
@@ -189,8 +187,8 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0 }: Props)
 
           {/* Score pills + matchup badge */}
           <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-            <ScorePill label="HIT" breakdown={hitBreakdown} />
-            <ScorePill label="HR"  breakdown={hrBreakdown} />
+            <ScorePill label="HIT" breakdown={hitBreakdown} active={expandedPill === "HIT"} onToggle={() => togglePill("HIT")} />
+            <ScorePill label="HR"  breakdown={hrBreakdown}  active={expandedPill === "HR"}  onToggle={() => togglePill("HR")} />
             <div className="flex flex-wrap gap-1 ml-auto">
               {matchup && (
                 <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${matchup.color}`}>
@@ -204,6 +202,16 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0 }: Props)
               )}
             </div>
           </div>
+
+          {/* Inline score breakdown — shown on tap/click */}
+          {expandedPill && (
+            <div className="mt-2 rounded-lg border border-border bg-muted/40 p-3">
+              <ScoreBreakdownTooltip
+                label={expandedPill}
+                breakdown={expandedPill === "HIT" ? hitBreakdown : hrBreakdown}
+              />
+            </div>
+          )}
         </CardHeader>
 
         <CardContent className="space-y-1.5 px-2 pb-2">
@@ -268,6 +276,5 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0 }: Props)
           )}
         </CardContent>
       </Card>
-    </TooltipProvider>
   );
 }
