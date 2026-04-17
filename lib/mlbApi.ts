@@ -379,6 +379,33 @@ export async function fetchPitcherStats(playerId: number, season: number): Promi
   }
 }
 
+// ─── Team Top Batters by Plate Appearances ────────────────────────────────────
+
+export async function fetchTeamTopBatters(
+  teamId: number,
+  season: number,
+  limit = 12
+): Promise<{ id: number; name: string; position: string; battingOrder: number }[]> {
+  try {
+    const data = await get<any>(
+      `/stats?stats=season&group=hitting&gameType=R&season=${season}&teamId=${teamId}&sportId=1`
+    );
+    const splits: any[] = data.stats?.[0]?.splits ?? [];
+    return splits
+      .filter((s) => (s.stat?.plateAppearances ?? 0) >= 5 && s.player?.id)
+      .sort((a, b) => (b.stat?.plateAppearances ?? 0) - (a.stat?.plateAppearances ?? 0))
+      .slice(0, limit)
+      .map((s, i) => ({
+        id: s.player.id,
+        name: s.player.fullName ?? "Unknown",
+        position: s.position?.abbreviation ?? "—",
+        battingOrder: i + 1, // rank by PA as proxy batting order
+      }));
+  } catch {
+    return [];
+  }
+}
+
 // ─── Build Full Daily Snapshot ─────────────────────────────────────────────────
 
 export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
@@ -392,7 +419,19 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
 
   const games: MLBGame[] = await Promise.all(
     scheduleItems.map(async (item) => {
-      const { homeLineup, awayLineup, homePitcherId, awayPitcherId } = await fetchBoxscore(item.gamePk);
+      // Fetch boxscore for pitcher IDs + top-PA lineups in parallel
+      const [boxscore, homeTopBatters, awayTopBatters] = await Promise.all([
+        fetchBoxscore(item.gamePk),
+        fetchTeamTopBatters(item.homeTeam.id, season),
+        fetchTeamTopBatters(item.awayTeam.id, season),
+      ]);
+
+      const { homePitcherId, awayPitcherId } = boxscore;
+
+      // Use top-PA batters as lineup (available before lineup is officially posted)
+      const homeLineup = homeTopBatters;
+      const awayLineup = awayTopBatters;
+
       const parkInfo = getParkFactor(item.venueId);
 
       const homeBatterIds = homeLineup.map((p) => p.id);
