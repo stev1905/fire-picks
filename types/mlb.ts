@@ -33,6 +33,8 @@ export interface MLBPitcher {
   last3InningsPitched: number;
   last3Starts: PitcherStart[];
   teamAbbreviation?: string;
+  seasonHRAllowed: number;
+  last3HRAllowed: number;
 }
 
 export interface PitcherStart {

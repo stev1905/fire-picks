@@ -6,7 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import type { MLBBatter, MLBPitcher } from "@/types/mlb";
 import {
   calcHitScoreBreakdown, calcHRScoreBreakdown,
-  scoreBadgeClass, type ScoreBreakdown,
+  isBouncebackHit, isBouncebackHR,
+  scoreBadgeClass, type ScoreBreakdown, type ScoreOptions,
 } from "@/lib/scores";
 import {
   LineChart, Line, XAxis, YAxis, Tooltip as ChartTooltip, ResponsiveContainer,
@@ -16,6 +17,7 @@ interface Props {
   batter: MLBBatter;
   opposingPitcher?: MLBPitcher;
   parkFactor?: number;
+  scoreOpts?: ScoreOptions;
 }
 
 function stat(value: number) {
@@ -133,11 +135,13 @@ const ChartTooltipContent = ({ active, payload, label }: any) => {
   return null;
 };
 
-export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0 }: Props) {
+export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0, scoreOpts = {} }: Props) {
   const [expandedPill, setExpandedPill] = useState<"HIT" | "HR" | null>(null);
 
-  const hitBreakdown = calcHitScoreBreakdown(batter, opposingPitcher, parkFactor);
-  const hrBreakdown  = calcHRScoreBreakdown(batter, opposingPitcher, parkFactor);
+  const hitBreakdown = calcHitScoreBreakdown(batter, opposingPitcher, parkFactor, scoreOpts);
+  const hrBreakdown  = calcHRScoreBreakdown(batter, opposingPitcher, parkFactor, scoreOpts);
+  const bounceHit    = isBouncebackHit(batter, hitBreakdown.total);
+  const bounceHR     = isBouncebackHR(batter, hrBreakdown.total);
   const matchup      = matchupBadge(batter, opposingPitcher);
   const h2h          = h2hBadge(batter);
   const hasStatcast  = batter.xBA !== undefined || batter.barrelPct !== undefined || batter.hardHitPct !== undefined;
@@ -170,8 +174,8 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0 }: Props)
             <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">{batter.position}</Badge>
           </div>
 
-          {/* Streak + hit rate */}
-          <div className="flex flex-wrap gap-x-2 mt-0.5">
+          {/* Streak + hit rate + bounce-back flags */}
+          <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-0.5">
             {batter.hittingStreak > 0 && (
               <span className="text-[10px] text-amber-500 dark:text-amber-400">
                 🔥 {batter.hittingStreak}-game streak
@@ -181,6 +185,16 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0 }: Props)
               <span className={`text-[10px] ${hitLabel.color}`}>
                 {hitLabel.icon && <span className="mr-0.5">{hitLabel.icon}</span>}
                 {hitsIn10}/{batter.last10Games.length} w/hit
+              </span>
+            )}
+            {bounceHit && (
+              <span className="text-[10px] font-semibold text-purple-600 dark:text-purple-400">
+                🔄 Due for hit
+              </span>
+            )}
+            {bounceHR && (
+              <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">
+                💫 Due for HR
               </span>
             )}
           </div>

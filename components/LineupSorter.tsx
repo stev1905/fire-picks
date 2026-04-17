@@ -5,6 +5,8 @@ import { BatterCard } from "@/components/BatterCard";
 import { Badge } from "@/components/ui/badge";
 import type { MLBBatter, MLBPitcher } from "@/types/mlb";
 import { calcHitScore, calcHRScore } from "@/lib/scores";
+import { getParkData } from "@/lib/parkFactors";
+import type { GameWeather } from "@/lib/weather";
 
 type SortKey =
   | "batting-order"
@@ -37,13 +39,14 @@ function sortBatters(
   batters: MLBBatter[],
   key: SortKey,
   pitcher?: MLBPitcher,
-  parkFactor = 1.0
+  parkFactor = 1.0,
+  scoreOpts: Parameters<typeof calcHitScore>[3] = {}
 ): MLBBatter[] {
   const s = [...batters];
   switch (key) {
     case "batting-order": return s.sort((a, b) => a.battingOrder - b.battingOrder);
-    case "hit-score":     return s.sort((a, b) => calcHitScore(b, pitcher, parkFactor) - calcHitScore(a, pitcher, parkFactor));
-    case "hr-score":      return s.sort((a, b) => calcHRScore(b, pitcher, parkFactor)  - calcHRScore(a, pitcher, parkFactor));
+    case "hit-score":     return s.sort((a, b) => calcHitScore(b, pitcher, parkFactor, scoreOpts) - calcHitScore(a, pitcher, parkFactor, scoreOpts));
+    case "hr-score":      return s.sort((a, b) => calcHRScore(b, pitcher, parkFactor, scoreOpts)  - calcHRScore(a, pitcher, parkFactor, scoreOpts));
     case "streak":        return s.sort((a, b) => b.hittingStreak - a.hittingStreak);
     case "avg-l3":        return s.sort((a, b) => b.last3AVG - a.last3AVG);
     case "avg-l6":        return s.sort((a, b) => b.last6AVG - a.last6AVG);
@@ -66,9 +69,11 @@ interface Props {
   lineup: MLBBatter[];
   opposingPitcher?: MLBPitcher;
   parkFactor?: number;
+  venueId?: number;
+  weather?: GameWeather;
 }
 
-export function LineupSorter({ lineup, opposingPitcher, parkFactor = 1.0 }: Props) {
+export function LineupSorter({ lineup, opposingPitcher, parkFactor = 1.0, venueId, weather }: Props) {
   const [sortKey, setSortKey] = useState<SortKey>("hit-score");
 
   if (lineup.length === 0) {
@@ -79,7 +84,15 @@ export function LineupSorter({ lineup, opposingPitcher, parkFactor = 1.0 }: Prop
     );
   }
 
-  const sorted = sortBatters(lineup, sortKey, opposingPitcher, parkFactor);
+  const park = venueId ? getParkData(venueId) : null;
+  const scoreOpts = {
+    weather: weather && !weather.indoor ? weather : undefined,
+    cfBearing: park?.cfBearing,
+    lf: park?.lf,
+    rf: park?.rf,
+  };
+
+  const sorted = sortBatters(lineup, sortKey, opposingPitcher, parkFactor, scoreOpts);
 
   return (
     <div className="space-y-3">
@@ -114,6 +127,7 @@ export function LineupSorter({ lineup, opposingPitcher, parkFactor = 1.0 }: Prop
             batter={batter}
             opposingPitcher={opposingPitcher}
             parkFactor={parkFactor}
+            scoreOpts={scoreOpts}
           />
         ))}
       </div>

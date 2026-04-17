@@ -145,6 +145,8 @@ export default async function GamePage({
             lineup={game.awayLineup}
             opposingPitcher={game.homeStartingPitcher}
             parkFactor={game.parkFactor}
+            venueId={game.venueId}
+            weather={weather}
           />
         </TabsContent>
 
@@ -153,6 +155,8 @@ export default async function GamePage({
             lineup={game.homeLineup}
             opposingPitcher={game.awayStartingPitcher}
             parkFactor={game.parkFactor}
+            venueId={game.venueId}
+            weather={weather}
           />
         </TabsContent>
 

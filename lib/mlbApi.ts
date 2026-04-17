@@ -357,14 +357,22 @@ export async function fetchPitcherStats(playerId: number, season: number): Promi
       last3InningsPitched = w3.inningsPitched;
     }
 
+    let seasonHRAllowed = 0;
+    if (seasonRes.status === "fulfilled") {
+      seasonHRAllowed = seasonRes.value.stats?.[0]?.splits?.[0]?.stat?.homeRuns ?? 0;
+    }
+    const last3HRAllowed = last3Starts.reduce((s, g) => s + ((g as any).hr || 0), 0);
+
     return {
       hand,
       seasonERA,
       last3ERA, last6ERA,
       last3HitsAllowed, last6HitsAllowed,
-      last3Strikeouts: (last3Starts.reduce((s, g) => s + g.strikeouts, 0)),
-      last3InningsPitched: (last3Starts.reduce((s, g) => s + g.inningsPitched, 0)),
+      last3Strikeouts,
+      last3InningsPitched,
       last3Starts,
+      seasonHRAllowed,
+      last3HRAllowed,
     };
   } catch {
     return {};
@@ -452,6 +460,8 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
           last3HitsAllowed: 0, last6HitsAllowed: 0,
           last3Strikeouts: 0, last3InningsPitched: 0,
           last3Starts: [],
+          seasonHRAllowed: 0,
+          last3HRAllowed: 0,
           ...stats,
         };
       };

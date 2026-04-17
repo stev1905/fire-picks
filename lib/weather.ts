@@ -5,6 +5,7 @@ export interface WeatherData {
   tempF: number;
   windMph: number;
   windDir: string;
+  windDeg: number; // meteorological degrees — where wind is coming FROM (0=N, 90=E, 180=S, 270=W)
   precipChance: number;
   condition: string;
   icon: string;
@@ -66,12 +67,14 @@ export async function getGameWeather(venueId: number, gameDate: string): Promise
     }
     if (idx < 0) return { indoor: true };
 
+    const windDeg: number = json.hourly.winddirection_10m[idx] ?? 0;
     const { condition, icon } = describeCode(json.hourly.weathercode[idx]);
     return {
       indoor: false,
       tempF: Math.round(json.hourly.temperature_2m[idx]),
       windMph: Math.round(json.hourly.windspeed_10m[idx]),
-      windDir: windDirLabel(json.hourly.winddirection_10m[idx]),
+      windDir: windDirLabel(windDeg),
+      windDeg,
       precipChance: json.hourly.precipitation_probability[idx] ?? 0,
       condition,
       icon,
