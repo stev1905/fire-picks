@@ -242,9 +242,9 @@ export function calcHRScoreBreakdown(
 
   // 1. Recent HR activity (0–20)
   const recentHR =
-    clamp((batter.last10HR / 4) * 10, 10) +
-    clamp((batter.last6HR  / 3) * 6,   6) +
-    clamp((batter.last3HR  / 2) * 4,   4);
+    clamp(((batter.last10HR ?? 0) / 4) * 10, 10) +
+    clamp(((batter.last6HR  ?? 0) / 3) * 6,   6) +
+    clamp(((batter.last3HR  ?? 0) / 2) * 4,   4);
   components.push({
     label: "Recent HRs (L3/L6/L10)",
     earned: Math.round(recentHR),
@@ -349,10 +349,12 @@ export function calcHRScoreBreakdown(
   // 9. Pitcher HR allowed — season rate (0–8)
   let pitcherHRScore = 0;
   if (pitcher) {
-    // Average SP allows ~1.2 HR/9 IP; scale so 2.0+/9 = max score
-    const hrPer9 = pitcher.last3InningsPitched > 0
-      ? (pitcher.last3HRAllowed / pitcher.last3InningsPitched) * 9
-      : pitcher.seasonHRAllowed > 0 ? pitcher.seasonHRAllowed / 30 : 0;
+    const l3hr  = pitcher.last3HRAllowed    ?? 0;
+    const l3ip  = pitcher.last3InningsPitched ?? 0;
+    const szHR  = pitcher.seasonHRAllowed   ?? 0;
+    const hrPer9 = l3ip > 0
+      ? (l3hr / l3ip) * 9
+      : szHR > 0 ? szHR / 30 : 0;
     pitcherHRScore = clamp((hrPer9 / 2.0) * 8, 8);
     const hrTier =
       hrPer9 >= 1.8 ? "HR prone" :
@@ -362,7 +364,7 @@ export function calcHRScoreBreakdown(
       label: "Pitcher HR Allowed",
       earned: Math.round(pitcherHRScore),
       max: 8,
-      value: `${pitcher.last3HRAllowed} in L3 starts — ${hrTier}`,
+      value: `${l3hr} in L3 starts — ${hrTier}`,
     });
   }
 
