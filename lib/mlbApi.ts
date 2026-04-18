@@ -388,11 +388,11 @@ export async function fetchTeamTopBatters(
 ): Promise<{ id: number; name: string; position: string; battingOrder: number }[]> {
   try {
     const data = await get<any>(
-      `/stats?stats=season&group=hitting&gameType=R&season=${season}&teamId=${teamId}&sportId=1`
+      `/stats?stats=season&group=hitting&gameType=R&season=${season}&teamId=${teamId}&sportId=1&limit=40`
     );
     const splits: any[] = data.stats?.[0]?.splits ?? [];
     return splits
-      .filter((s) => (s.stat?.plateAppearances ?? 0) >= 5 && s.player?.id)
+      .filter((s) => (s.stat?.plateAppearances ?? 0) >= 1 && s.player?.id)
       .sort((a, b) => (b.stat?.plateAppearances ?? 0) - (a.stat?.plateAppearances ?? 0))
       .slice(0, limit)
       .map((s, i) => ({
