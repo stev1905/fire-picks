@@ -387,19 +387,50 @@ export async function fetchTeamTopBatters(
   limit = 12
 ): Promise<{ id: number; name: string; position: string; battingOrder: number }[]> {
   try {
-    const data = await get<any>(
-      `/stats?stats=season&group=hitting&gameType=R&season=${season}&teamId=${teamId}&sportId=1&limit=40`
+    // Get full active roster — more reliable than the stats endpoint early in season
+    const rosterData = await get<any>(
+      `/teams/${teamId}/roster?rosterType=active&season=${season}`
     );
-    const splits: any[] = data.stats?.[0]?.splits ?? [];
-    return splits
-      .filter((s) => (s.stat?.plateAppearances ?? 0) >= 1 && s.player?.id)
-      .sort((a, b) => (b.stat?.plateAppearances ?? 0) - (a.stat?.plateAppearances ?? 0))
+    const roster: any[] = rosterData.roster ?? [];
+
+    // Position players only (exclude pitchers)
+    const posPlayers = roster.filter(
+      (p) => p.position?.type !== "Pitcher" && p.position?.code !== "1"
+    );
+
+    // Fetch season PA for each position player in parallel
+    const withPA = await Promise.all(
+      posPlayers.map(async (p) => {
+        try {
+          const res = await get<any>(
+            `/people/${p.person.id}/stats?stats=season&season=${season}&group=hitting`
+          );
+          const stat = res.stats?.[0]?.splits?.[0]?.stat ?? {};
+          return {
+            id: p.person.id as number,
+            name: (p.person.fullName ?? "Unknown") as string,
+            position: (p.position?.abbreviation ?? "—") as string,
+            pa: (stat.plateAppearances ?? 0) as number,
+          };
+        } catch {
+          return {
+            id: p.person.id as number,
+            name: (p.person.fullName ?? "Unknown") as string,
+            position: (p.position?.abbreviation ?? "—") as string,
+            pa: 0,
+          };
+        }
+      })
+    );
+
+    return withPA
+      .sort((a, b) => b.pa - a.pa)
       .slice(0, limit)
-      .map((s, i) => ({
-        id: s.player.id,
-        name: s.player.fullName ?? "Unknown",
-        position: s.position?.abbreviation ?? "—",
-        battingOrder: i + 1, // rank by PA as proxy batting order
+      .map((p, i) => ({
+        id: p.id,
+        name: p.name,
+        position: p.position,
+        battingOrder: i + 1,
       }));
   } catch {
     return [];
