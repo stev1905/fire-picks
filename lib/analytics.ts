@@ -98,6 +98,46 @@ export function getColdestHRHitters(snapshot: DailySnapshot): RankedBatter[] {
     .slice(0, 10);
 }
 
+export interface PitcherTodayRow {
+  id: number;
+  name: string;
+  hand: "L" | "R";
+  teamAbbreviation: string;
+  opponentAbbreviation: string;
+  gamePk: number;
+  seasonERA: number;
+  last3HitsAllowed: number;
+  avgHitsPerStart: number;
+  starts: number;
+}
+
+/** All starting pitchers today with hit-rate context */
+export function getPitchersToday(snapshot: DailySnapshot): PitcherTodayRow[] {
+  const rows: PitcherTodayRow[] = [];
+  for (const game of snapshot.games) {
+    const add = (p: MLBPitcher, team: string, opp: string) => {
+      const starts = p.last3Starts.length || 1;
+      rows.push({
+        id: p.id,
+        name: p.name,
+        hand: p.hand,
+        teamAbbreviation: team,
+        opponentAbbreviation: opp,
+        gamePk: game.gamePk,
+        seasonERA: p.seasonERA,
+        last3HitsAllowed: p.last3HitsAllowed,
+        avgHitsPerStart: parseFloat((p.last3HitsAllowed / starts).toFixed(1)),
+        starts,
+      });
+    };
+    if (game.awayStartingPitcher)
+      add(game.awayStartingPitcher, game.awayTeam.abbreviation, game.homeTeam.abbreviation);
+    if (game.homeStartingPitcher)
+      add(game.homeStartingPitcher, game.homeTeam.abbreviation, game.awayTeam.abbreviation);
+  }
+  return rows.sort((a, b) => a.avgHitsPerStart - b.avgHitsPerStart);
+}
+
 /** Top 10 hottest pitchers by ERA + K rate */
 export function getHottestPitchers(snapshot: DailySnapshot): RankedPitcher[] {
   const pitchers: RankedPitcher[] = [];
@@ -105,25 +145,13 @@ export function getHottestPitchers(snapshot: DailySnapshot): RankedPitcher[] {
   for (const game of snapshot.games) {
     if (game.awayStartingPitcher) {
       const p = game.awayStartingPitcher;
-      const ip = p.last3InningsPitched || 1;
       const kPerGame = p.last3Strikeouts / Math.max(p.last3Starts.length, 1);
-      pitchers.push({
-        ...p,
-        teamAbbreviation: game.awayTeam.abbreviation,
-        kPerGame,
-        score: 0,
-      });
+      pitchers.push({ ...p, teamAbbreviation: game.awayTeam.abbreviation, kPerGame, score: 0 });
     }
     if (game.homeStartingPitcher) {
       const p = game.homeStartingPitcher;
-      const ip = p.last3InningsPitched || 1;
       const kPerGame = p.last3Strikeouts / Math.max(p.last3Starts.length, 1);
-      pitchers.push({
-        ...p,
-        teamAbbreviation: game.homeTeam.abbreviation,
-        kPerGame,
-        score: 0,
-      });
+      pitchers.push({ ...p, teamAbbreviation: game.homeTeam.abbreviation, kPerGame, score: 0 });
     }
   }
 
