@@ -4,26 +4,30 @@ import { useState } from "react";
 import Link from "next/link";
 import type { PitcherTodayRow } from "@/lib/analytics";
 
-type SortKey = "name" | "era" | "avgH" | "l3Hits" | "matchup";
+type SortKey = "name" | "era" | "avgH" | "l3Hits" | "matchup" | "l3HR" | "seasonHR";
 type Dir = "asc" | "desc";
 
 const COLS: { key: SortKey; label: string; className: string }[] = [
-  { key: "name",    label: "Pitcher",      className: "text-left" },
-  { key: "matchup", label: "Matchup",      className: "text-center" },
-  { key: "era",     label: "ERA",          className: "text-center" },
-  { key: "avgH",    label: "Avg H/Start",  className: "text-center" },
-  { key: "l3Hits",  label: "L3 Hits",      className: "text-center" },
+  { key: "name",     label: "Pitcher",     className: "text-left" },
+  { key: "matchup",  label: "Matchup",     className: "text-center" },
+  { key: "era",      label: "ERA",         className: "text-center" },
+  { key: "avgH",     label: "Avg H/Start", className: "text-center" },
+  { key: "l3Hits",   label: "L3 Hits",     className: "text-center" },
+  { key: "l3HR",     label: "L3 HR",       className: "text-center" },
+  { key: "seasonHR", label: "Szn HR",      className: "text-center" },
 ];
 
 function sortRows(rows: PitcherTodayRow[], key: SortKey, dir: Dir): PitcherTodayRow[] {
   return [...rows].sort((a, b) => {
     let v = 0;
     switch (key) {
-      case "name":    v = a.name.localeCompare(b.name); break;
-      case "matchup": v = a.opponentAbbreviation.localeCompare(b.opponentAbbreviation); break;
-      case "era":     v = a.seasonERA - b.seasonERA; break;
-      case "avgH":    v = a.avgHitsPerStart - b.avgHitsPerStart; break;
-      case "l3Hits":  v = a.last3HitsAllowed - b.last3HitsAllowed; break;
+      case "name":     v = a.name.localeCompare(b.name); break;
+      case "matchup":  v = a.opponentAbbreviation.localeCompare(b.opponentAbbreviation); break;
+      case "era":      v = a.seasonERA - b.seasonERA; break;
+      case "avgH":     v = a.avgHitsPerStart - b.avgHitsPerStart; break;
+      case "l3Hits":   v = a.last3HitsAllowed - b.last3HitsAllowed; break;
+      case "l3HR":     v = a.last3HRAllowed - b.last3HRAllowed; break;
+      case "seasonHR": v = a.seasonHRAllowed - b.seasonHRAllowed; break;
     }
     return dir === "asc" ? v : -v;
   });
@@ -39,12 +43,11 @@ export function PitchersTodayTable({ rows }: { rows: PitcherTodayRow[] }) {
   };
 
   const sorted = sortRows(rows, sortKey, dir);
-  const arrow = (key: SortKey) =>
-    sortKey === key ? (dir === "asc" ? " ↑" : " ↓") : "";
+  const arrow = (key: SortKey) => sortKey === key ? (dir === "asc" ? " ↑" : " ↓") : "";
 
   if (rows.length === 0) {
     return (
-      <div className="px-4 py-8 text-center text-sm text-muted-foreground">
+      <div className="bg-card border border-border rounded-xl px-4 py-8 text-center text-sm text-muted-foreground">
         No starters announced yet.
       </div>
     );
@@ -52,13 +55,12 @@ export function PitchersTodayTable({ rows }: { rows: PitcherTodayRow[] }) {
 
   return (
     <div className="bg-card border border-border rounded-xl overflow-hidden">
-      {/* Header */}
-      <div className="grid grid-cols-[1fr_80px_60px_80px_70px] gap-2 px-4 py-2 bg-muted/50">
+      <div className="grid grid-cols-[1fr_72px_56px_80px_64px_56px_64px] gap-2 px-4 py-2 bg-muted/50">
         {COLS.map((col) => (
           <button
             key={col.key}
             onClick={() => toggle(col.key)}
-            className={`text-[10px] font-semibold text-muted-foreground uppercase tracking-widest hover:text-foreground transition-colors ${col.className} ${sortKey === col.key ? "text-foreground" : ""}`}
+            className={`text-[10px] font-semibold uppercase tracking-widest hover:text-foreground transition-colors whitespace-nowrap ${col.className} ${sortKey === col.key ? "text-foreground" : "text-muted-foreground"}`}
           >
             {col.label}{arrow(col.key)}
           </button>
@@ -71,10 +73,14 @@ export function PitchersTodayTable({ rows }: { rows: PitcherTodayRow[] }) {
             p.avgHitsPerStart >= 8 ? "text-red-500 dark:text-red-400" :
             p.avgHitsPerStart >= 5 ? "text-amber-500 dark:text-amber-400" :
                                      "text-green-600 dark:text-green-400";
+          const hrTier =
+            p.last3HRAllowed >= 3 ? "text-red-500 dark:text-red-400" :
+            p.last3HRAllowed >= 1 ? "text-amber-500 dark:text-amber-400" :
+                                    "text-muted-foreground";
           return (
             <div
               key={`${p.gamePk}-${p.id}`}
-              className="grid grid-cols-[1fr_80px_60px_80px_70px] gap-2 px-4 py-3 items-center hover:bg-muted/30 transition-colors"
+              className="grid grid-cols-[1fr_72px_56px_80px_64px_56px_64px] gap-2 px-4 py-3 items-center hover:bg-muted/30 transition-colors"
             >
               <div className="flex items-center gap-2 min-w-0">
                 <Link
@@ -86,9 +92,7 @@ export function PitchersTodayTable({ rows }: { rows: PitcherTodayRow[] }) {
                 <span className="text-[10px] text-muted-foreground border border-border rounded px-1 shrink-0">
                   {p.hand}HP
                 </span>
-                <span className="text-[10px] text-muted-foreground shrink-0">
-                  {p.teamAbbreviation}
-                </span>
+                <span className="text-[10px] text-muted-foreground shrink-0">{p.teamAbbreviation}</span>
               </div>
               <div className="text-center text-xs text-muted-foreground">vs {p.opponentAbbreviation}</div>
               <div className="text-center text-sm tabular-nums">{p.seasonERA.toFixed(2)}</div>
@@ -97,6 +101,12 @@ export function PitchersTodayTable({ rows }: { rows: PitcherTodayRow[] }) {
               </div>
               <div className="text-center text-sm tabular-nums text-muted-foreground">
                 {p.last3HitsAllowed}
+              </div>
+              <div className={`text-center text-sm font-semibold tabular-nums ${hrTier}`}>
+                {p.last3HRAllowed}
+              </div>
+              <div className="text-center text-sm tabular-nums text-muted-foreground">
+                {p.seasonHRAllowed}
               </div>
             </div>
           );

@@ -108,6 +108,8 @@ export interface PitcherTodayRow {
   seasonERA: number;
   last3HitsAllowed: number;
   avgHitsPerStart: number;
+  last3HRAllowed: number;
+  seasonHRAllowed: number;
   starts: number;
 }
 
@@ -127,6 +129,8 @@ export function getPitchersToday(snapshot: DailySnapshot): PitcherTodayRow[] {
         seasonERA: p.seasonERA,
         last3HitsAllowed: p.last3HitsAllowed,
         avgHitsPerStart: parseFloat((p.last3HitsAllowed / starts).toFixed(1)),
+        last3HRAllowed: p.last3HRAllowed ?? 0,
+        seasonHRAllowed: p.seasonHRAllowed ?? 0,
         starts,
       });
     };
