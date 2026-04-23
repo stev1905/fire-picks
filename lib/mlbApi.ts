@@ -87,6 +87,179 @@ export async function fetchStatcastData(season: number): Promise<Map<number, Sta
   return map;
 }
 
+// ─── Pitcher Arsenal + Discipline (Baseball Savant) ──────────────────────────
+
+type PitcherArsenalEntry = {
+  fastballPct: number;
+  breakingPct: number;
+  offspeedPct: number;
+  zonePct: number;
+  chaseInducePct: number;
+};
+
+const FASTBALL_TYPES  = new Set(["FF", "SI", "FC"]);
+const BREAKING_TYPES  = new Set(["SL", "CU", "KC", "CS", "SV"]);
+const OFFSPEED_TYPES  = new Set(["CH", "FS", "FO", "KN"]);
+
+export async function fetchPitcherArsenalData(season: number): Promise<Map<number, PitcherArsenalEntry>> {
+  const map = new Map<number, PitcherArsenalEntry>();
+  try {
+    const [arsenalRes, statcastRes] = await Promise.allSettled([
+      fetch(
+        `https://baseballsavant.mlb.com/leaderboard/pitch-arsenal-stats?type=pitcher&year=${season}&min=1&csv=true`,
+        { cache: "no-store" }
+      ),
+      fetch(
+        `https://baseballsavant.mlb.com/leaderboard/statcast?type=pitcher&year=${season}&position=&team=&min=1&csv=true`,
+        { cache: "no-store" }
+      ),
+    ]);
+
+    const parseCol = (cols: string[], idx: number) =>
+      idx >= 0 ? cols[idx]?.replace(/"/g, "").trim() ?? "" : "";
+
+    // Arsenal endpoint: one row per player per pitch type — aggregate usage %
+    if (arsenalRes.status === "fulfilled" && arsenalRes.value.ok) {
+      const text = await arsenalRes.value.text();
+      const lines = text.trim().split("\n");
+      const header = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
+      const idIdx    = header.indexOf("player_id");
+      const typeIdx  = header.indexOf("pitch_type");
+      const usageIdx = header.findIndex((h) => h === "pitch_usage" || h === "pitches_percent");
+      if (idIdx >= 0 && typeIdx >= 0 && usageIdx >= 0) {
+        for (const line of lines.slice(1)) {
+          const cols   = line.split(",");
+          const id     = parseInt(parseCol(cols, idIdx));
+          const ptype  = parseCol(cols, typeIdx).toUpperCase();
+          const usage  = parseFloat(parseCol(cols, usageIdx));
+          if (isNaN(id) || isNaN(usage)) continue;
+          const prev = map.get(id) ?? { fastballPct: 0, breakingPct: 0, offspeedPct: 0, zonePct: 0, chaseInducePct: 0 };
+          if (FASTBALL_TYPES.has(ptype))  prev.fastballPct += usage;
+          if (BREAKING_TYPES.has(ptype))  prev.breakingPct += usage;
+          if (OFFSPEED_TYPES.has(ptype))  prev.offspeedPct += usage;
+          map.set(id, prev);
+        }
+      }
+    }
+
+    // Statcast pitcher leaderboard: zone%, opponent o-swing%
+    if (statcastRes.status === "fulfilled" && statcastRes.value.ok) {
+      const text = await statcastRes.value.text();
+      const lines = text.trim().split("\n");
+      const header = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
+      const idIdx       = header.indexOf("player_id");
+      const zoneIdx     = header.findIndex((h) => h === "zone_percent"   || h === "zone");
+      const chaseIdx    = header.findIndex((h) => h === "oz_swing_percent" || h === "o_swing_percent");
+      if (idIdx >= 0) {
+        for (const line of lines.slice(1)) {
+          const cols = line.split(",");
+          const id   = parseInt(parseCol(cols, idIdx));
+          if (isNaN(id)) continue;
+          const zone  = zoneIdx  >= 0 ? parseFloat(parseCol(cols, zoneIdx))  : NaN;
+          const chase = chaseIdx >= 0 ? parseFloat(parseCol(cols, chaseIdx)) : NaN;
+          const prev  = map.get(id) ?? { fastballPct: 0, breakingPct: 0, offspeedPct: 0, zonePct: 0, chaseInducePct: 0 };
+          map.set(id, {
+            ...prev,
+            zonePct:        isNaN(zone)  ? prev.zonePct        : zone,
+            chaseInducePct: isNaN(chase) ? prev.chaseInducePct : chase,
+          });
+        }
+      }
+    }
+  } catch {
+    // optional data — return whatever we have
+  }
+  return map;
+}
+
+// ─── Batter Discipline + Pitch Type Performance (Baseball Savant) ─────────────
+
+type BatterDisciplineEntry = {
+  chasePct: number;
+  baVsFastball: number;
+  baVsBreaking: number;
+  whiffVsBreaking: number;
+};
+
+export async function fetchBatterDisciplineData(season: number): Promise<Map<number, BatterDisciplineEntry>> {
+  const map = new Map<number, BatterDisciplineEntry>();
+  try {
+    const [statcastRes, arsenalRes] = await Promise.allSettled([
+      fetch(
+        `https://baseballsavant.mlb.com/leaderboard/statcast?type=batter&year=${season}&position=&team=&min=1&csv=true`,
+        { cache: "no-store" }
+      ),
+      fetch(
+        `https://baseballsavant.mlb.com/leaderboard/pitch-arsenal-stats?type=batter&year=${season}&min=1&csv=true`,
+        { cache: "no-store" }
+      ),
+    ]);
+
+    const parseCol = (cols: string[], idx: number) =>
+      idx >= 0 ? cols[idx]?.replace(/"/g, "").trim() ?? "" : "";
+
+    // Statcast batter leaderboard: o_swing% (chase rate)
+    if (statcastRes.status === "fulfilled" && statcastRes.value.ok) {
+      const text = await statcastRes.value.text();
+      const lines = text.trim().split("\n");
+      const header = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
+      const idIdx    = header.indexOf("player_id");
+      const chaseIdx = header.findIndex((h) => h === "o_swing_percent" || h === "oz_swing_percent");
+      if (idIdx >= 0 && chaseIdx >= 0) {
+        for (const line of lines.slice(1)) {
+          const cols  = line.split(",");
+          const id    = parseInt(parseCol(cols, idIdx));
+          const chase = parseFloat(parseCol(cols, chaseIdx));
+          if (isNaN(id) || isNaN(chase)) continue;
+          const prev = map.get(id) ?? { chasePct: 0, baVsFastball: 0, baVsBreaking: 0, whiffVsBreaking: 0 };
+          map.set(id, { ...prev, chasePct: chase });
+        }
+      }
+    }
+
+    // Batter arsenal endpoint: per pitch-type BA and whiff rate
+    if (arsenalRes.status === "fulfilled" && arsenalRes.value.ok) {
+      const text = await arsenalRes.value.text();
+      const lines = text.trim().split("\n");
+      const header = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
+      const idIdx      = header.indexOf("player_id");
+      const typeIdx    = header.indexOf("pitch_type");
+      const baIdx      = header.findIndex((h) => h === "ba"  || h === "batting_avg");
+      const whiffIdx   = header.findIndex((h) => h === "whiff_percent" || h === "whiff_pct");
+      if (idIdx >= 0 && typeIdx >= 0) {
+        for (const line of lines.slice(1)) {
+          const cols  = line.split(",");
+          const id    = parseInt(parseCol(cols, idIdx));
+          const ptype = parseCol(cols, typeIdx).toUpperCase();
+          if (isNaN(id)) continue;
+          const ba    = baIdx    >= 0 ? parseFloat(parseCol(cols, baIdx))    : NaN;
+          const whiff = whiffIdx >= 0 ? parseFloat(parseCol(cols, whiffIdx)) : NaN;
+          const prev  = map.get(id) ?? { chasePct: 0, baVsFastball: 0, baVsBreaking: 0, whiffVsBreaking: 0 };
+          if (FASTBALL_TYPES.has(ptype) && !isNaN(ba)) {
+            // Average BA across fastball types (simple running mean)
+            const existing = prev.baVsFastball;
+            prev.baVsFastball = existing > 0 ? (existing + ba) / 2 : ba;
+          }
+          if (BREAKING_TYPES.has(ptype)) {
+            if (!isNaN(ba)) {
+              const existing = prev.baVsBreaking;
+              prev.baVsBreaking = existing > 0 ? (existing + ba) / 2 : ba;
+            }
+            if (!isNaN(whiff)) {
+              const existing = prev.whiffVsBreaking;
+              prev.whiffVsBreaking = existing > 0 ? (existing + whiff) / 2 : whiff;
+            }
+          }
+          map.set(id, prev);
+        }
+      }
+    }
+  } catch {
+    // optional data — return whatever we have
+  }
+  return map;
+}
+
 // ─── Batter vs Pitcher (career H2H) ───────────────────────────────────────────
 
 export async function fetchBatterVsPitcher(
@@ -446,10 +619,12 @@ export async function fetchTeamTopBatters(
 export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
   const season = new Date(date).getFullYear();
 
-  // Fetch schedule + Statcast leaderboards in parallel (Statcast is one-time for the whole snapshot)
-  const [scheduleItems, statcastMap] = await Promise.all([
+  // Fetch schedule + all Statcast leaderboards in parallel (each is a one-time CSV for the whole snapshot)
+  const [scheduleItems, statcastMap, pitcherArsenalMap, batterDisciplineMap] = await Promise.all([
     fetchSchedule(date),
     fetchStatcastData(season),
+    fetchPitcherArsenalData(season),
+    fetchBatterDisciplineData(season),
   ]);
 
   const games: MLBGame[] = await Promise.all(
@@ -484,8 +659,8 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
       allBatterIds.forEach((id, i) => {
         batterStatsMap[id] = {
           ...batterStatsArr[i],
-          // Merge Statcast data when available
-          ...(statcastMap.has(id) ? statcastMap.get(id)! : {}),
+          ...(statcastMap.has(id)         ? statcastMap.get(id)!         : {}),
+          ...(batterDisciplineMap.has(id) ? batterDisciplineMap.get(id)! : {}),
         };
       });
 
@@ -538,6 +713,7 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
           seasonHRAllowed: 0,
           last3HRAllowed: 0,
           ...stats,
+          ...(pitcherArsenalMap.has(id) ? pitcherArsenalMap.get(id)! : {}),
         };
       };
 

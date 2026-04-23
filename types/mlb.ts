@@ -35,6 +35,12 @@ export interface MLBPitcher {
   teamAbbreviation?: string;
   seasonHRAllowed: number;
   last3HRAllowed: number;
+  // Pitch arsenal (Baseball Savant)
+  fastballPct?: number;    // % fastballs thrown (FF + SI + FC)
+  breakingPct?: number;    // % breaking balls (SL + CU + KC + CS)
+  offspeedPct?: number;    // % offspeed (CH + FS)
+  zonePct?: number;        // % pitches thrown in the strike zone
+  chaseInducePct?: number; // opponent o-swing% outside zone
 }
 
 export interface PitcherStart {
@@ -79,6 +85,11 @@ export interface MLBBatter {
   xBA?: number;
   barrelPct?: number;
   hardHitPct?: number;
+  // Plate discipline (Baseball Savant)
+  chasePct?: number;       // o-swing% — how often batter swings at pitches outside zone
+  baVsFastball?: number;   // batting avg vs fastballs
+  baVsBreaking?: number;   // batting avg vs breaking balls
+  whiffVsBreaking?: number; // whiff rate vs breaking balls
   // Career head-to-head vs opposing pitcher
   vsCurrentPitcher?: {
     atBats: number;

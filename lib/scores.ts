@@ -32,10 +32,12 @@ function fmt(v: number) {
 function calcWeatherComponent(
   weather: WeatherData,
   cfBearing: number,
-  maxPts: number
+  maxPts: number,
+  pullBearing?: number // if provided, score wind toward pull side instead of CF
 ): { score: number; value: string } {
-  // Tailwind direction: wind should blow FROM behind home plate (cfBearing+180) toward CF
-  const tailwindSource = (cfBearing + 180) % 360;
+  const targetBearing = pullBearing ?? cfBearing;
+  // Tailwind direction: wind should blow FROM behind home plate toward the target bearing
+  const tailwindSource = (targetBearing + 180) % 360;
   const diff = Math.abs(((weather.windDeg - tailwindSource) + 360) % 360);
   const normalizedDiff = diff > 180 ? 360 - diff : diff; // 0–180
   const windEffect = Math.cos((normalizedDiff * Math.PI) / 180); // 1=tailwind, -1=headwind
@@ -56,6 +58,57 @@ function calcWeatherComponent(
                           ` · ${weather.tempF}°F`;
 
   return { score, value: `${windLabel}${tempLabel}` };
+}
+
+/** Derive a pitch matchup score component (-8 to +8) and readable label */
+export function calcPitchMatchup(
+  batter: MLBBatter,
+  pitcher: MLBPitcher
+): { earned: number; max: number; value: string } {
+  let delta = 0;
+  const notes: string[] = [];
+
+  const hasArsenal = pitcher.fastballPct !== undefined || pitcher.breakingPct !== undefined;
+  const hasDiscipline = batter.chasePct !== undefined || batter.baVsBreaking !== undefined;
+  if (!hasArsenal && !hasDiscipline) return { earned: 4, max: 8, value: "—" };
+
+  // Breaking ball matchup
+  const brPct = pitcher.breakingPct ?? 0;
+  if (brPct > 25) {
+    if (batter.baVsBreaking !== undefined) {
+      if (batter.baVsBreaking >= 0.260)      { delta += 2; notes.push(`hits breaking balls (.${Math.round(batter.baVsBreaking * 1000)})`); }
+      else if (batter.baVsBreaking < 0.220)  { delta -= 2; notes.push(`struggles vs breaking (.${Math.round(batter.baVsBreaking * 1000)})`); }
+    }
+    if (batter.whiffVsBreaking !== undefined && batter.whiffVsBreaking > 35) {
+      delta -= 1;
+      notes.push(`high whiff vs breaking (${batter.whiffVsBreaking.toFixed(0)}%)`);
+    }
+  }
+
+  // Fastball matchup
+  const fbPct = pitcher.fastballPct ?? 0;
+  if (fbPct > 45) {
+    if (batter.baVsFastball !== undefined) {
+      if (batter.baVsFastball >= 0.290)      { delta += 2; notes.push(`strong vs fastball (.${Math.round(batter.baVsFastball * 1000)})`); }
+      else if (batter.baVsFastball < 0.230)  { delta -= 1; notes.push(`below avg vs fastball`); }
+    }
+  }
+
+  // Chase rate matchup
+  if (pitcher.chaseInducePct !== undefined && batter.chasePct !== undefined) {
+    if (pitcher.chaseInducePct > 32 && batter.chasePct > 32) {
+      delta -= 2;
+      notes.push(`chases pitches (${batter.chasePct.toFixed(0)}%) vs deceptive pitcher`);
+    } else if (pitcher.zonePct !== undefined && pitcher.zonePct < 44 && batter.chasePct < 26) {
+      delta += 1;
+      notes.push(`disciplined eye vs off-zone pitcher`);
+    }
+  }
+
+  // Map delta (-6 to +6) onto earned (0–8), baseline 4
+  const earned = clamp(4 + delta, 8);
+  const value = notes[0] ?? (delta > 0 ? "slight advantage" : delta < 0 ? "slight disadvantage" : "neutral");
+  return { earned, max: 8, value };
 }
 
 /**
@@ -209,10 +262,18 @@ export function calcHitScoreBreakdown(
       : "—",
   });
 
+  // 11. Pitch matchup — pitcher arsenal vs batter discipline (0–8, baseline 4 = neutral)
+  let pitchMatchupScore = 0;
+  if (pitcher) {
+    const pm = calcPitchMatchup(batter, pitcher);
+    pitchMatchupScore = pm.earned - 4; // offset from neutral baseline so it doesn't double-count
+    components.push({ label: "Pitch Matchup", earned: pm.earned, max: pm.max, value: pm.value });
+  }
+
   const total = Math.min(100, Math.max(0, Math.round(
     form + consistency + matchup + streak + park + pitcherScore +
     (opts.weather && opts.cfBearing !== undefined ? components.find(c => c.label === "Wind & Weather")!.earned : 0) +
-    xBAScore + hardHitScore + h2hScore
+    xBAScore + hardHitScore + h2hScore + pitchMatchupScore
   )));
 
   return { total, components };
@@ -317,10 +378,15 @@ export function calcHRScoreBreakdown(
     value: pullValue,
   });
 
-  // 6. Weather (0–8)
+  // 6. Weather — scored toward pull side, not CF (LHH pull to RF ≈ cfBearing+45, RHH to LF ≈ cfBearing-45)
   let wxScore = 0;
   if (opts.weather && opts.cfBearing !== undefined) {
-    const { score: wx, value: wxLabel } = calcWeatherComponent(opts.weather, opts.cfBearing, 8);
+    const cf = opts.cfBearing;
+    const pullBearing =
+      batter.hand === "L" ? (cf + 45) % 360 :
+      batter.hand === "R" ? (cf - 45 + 360) % 360 :
+      cf;
+    const { score: wx, value: wxLabel } = calcWeatherComponent(opts.weather, cf, 8, pullBearing);
     wxScore = wx;
     components.push({ label: "Wind & Weather", earned: wx, max: 8, value: wxLabel });
   }
