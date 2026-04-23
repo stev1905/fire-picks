@@ -6,6 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import type { MLBBatter, MLBPitcher } from "@/types/mlb";
 import {
   calcHitScoreBreakdown, calcHRScoreBreakdown,
+  calcPitchMatchup,
   isBouncebackHit, isBouncebackHR,
   scoreBadgeClass, type ScoreBreakdown, type ScoreOptions,
 } from "@/lib/scores";
@@ -32,6 +33,16 @@ function matchupBadge(batter: MLBBatter, pitcher?: MLBPitcher) {
   if (avg >= 0.280) return { label: `${avgStr} vs ${hand}`, color: "bg-green-500/90 text-white" };
   if (avg <= 0.210) return { label: `${avgStr} vs ${hand}`, color: "bg-red-500/80 text-white" };
   return { label: `${avgStr} vs ${hand}`, color: "bg-muted text-muted-foreground" };
+}
+
+function pitchMatchupBadge(batter: MLBBatter, pitcher?: MLBPitcher) {
+  if (!pitcher) return null;
+  const pm = calcPitchMatchup(batter, pitcher);
+  if (pm.value === "—") return null;
+  const delta = pm.earned - 4;
+  if (delta >= 2) return { label: `Pitch ↑ ${pm.value}`, color: "bg-green-500/80 text-white" };
+  if (delta <= -2) return { label: `Pitch ↓ ${pm.value}`, color: "bg-red-500/80 text-white" };
+  return null; // don't show badge for neutral — no noise
 }
 
 function h2hBadge(batter: MLBBatter) {
@@ -144,6 +155,7 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0, scoreOpt
   const bounceHR     = isBouncebackHR(batter, hrBreakdown.total);
   const matchup      = matchupBadge(batter, opposingPitcher);
   const h2h          = h2hBadge(batter);
+  const pitchMatchup = pitchMatchupBadge(batter, opposingPitcher);
   const hasStatcast  = batter.xBA !== undefined || batter.barrelPct !== undefined || batter.hardHitPct !== undefined;
 
   const togglePill = (pill: "HIT" | "HR") =>
@@ -212,6 +224,11 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0, scoreOpt
               {h2h && (
                 <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${h2h.color}`}>
                   {h2h.label}
+                </span>
+              )}
+              {pitchMatchup && (
+                <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${pitchMatchup.color}`}>
+                  {pitchMatchup.label}
                 </span>
               )}
             </div>
