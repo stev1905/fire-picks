@@ -112,9 +112,9 @@ export async function fetchBatterVsPitcher(
 
 // ─── Schedule ─────────────────────────────────────────────────────────────────
 
-export async function fetchSchedule(date: string): Promise<{ gamePk: number; venueId: number; homeTeam: MLBTeam; awayTeam: MLBTeam; status: string; gameDate: string }[]> {
+export async function fetchSchedule(date: string): Promise<{ gamePk: number; venueId: number; homeTeam: MLBTeam; awayTeam: MLBTeam; status: string; gameDate: string; homeProbablePitcherId?: number; awayProbablePitcherId?: number; homeProbablePitcherName?: string; awayProbablePitcherName?: string }[]> {
   const data = await get<any>(
-    `/schedule?sportId=1&date=${date}&hydrate=team,venue,lineups`
+    `/schedule?sportId=1&date=${date}&hydrate=team,venue,lineups,probablePitcher`
   );
 
   const games: any[] = [];
@@ -136,6 +136,10 @@ export async function fetchSchedule(date: string): Promise<{ gamePk: number; ven
           name: g.teams.away.team.name,
           abbreviation: g.teams.away.team.abbreviation ?? "",
         },
+        homeProbablePitcherId: g.teams.home.probablePitcher?.id,
+        awayProbablePitcherId: g.teams.away.probablePitcher?.id,
+        homeProbablePitcherName: g.teams.home.probablePitcher?.fullName,
+        awayProbablePitcherName: g.teams.away.probablePitcher?.fullName,
       });
     }
   }
@@ -457,7 +461,8 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
         fetchTeamTopBatters(item.awayTeam.id, season),
       ]);
 
-      const { homePitcherId, awayPitcherId } = boxscore;
+      const homePitcherId = boxscore.homePitcherId ?? item.homeProbablePitcherId;
+      const awayPitcherId = boxscore.awayPitcherId ?? item.awayProbablePitcherId;
 
       // Use top-PA batters as lineup (available before lineup is officially posted)
       const homeLineup = homeTopBatters;
@@ -536,9 +541,11 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
         };
       };
 
-      // Build name lookup from lineups (pitchers may not be in batting lineup)
+      // Build name lookup from lineups + probable pitcher names from schedule
       const nameMap = new Map<number, string>();
       [...homeLineup, ...awayLineup].forEach((p) => nameMap.set(p.id, p.name));
+      if (item.homeProbablePitcherId && item.homeProbablePitcherName) nameMap.set(item.homeProbablePitcherId, item.homeProbablePitcherName);
+      if (item.awayProbablePitcherId && item.awayProbablePitcherName) nameMap.set(item.awayProbablePitcherId, item.awayProbablePitcherName);
 
       // Fetch pitcher names if not in lineup
       const fetchName = async (id?: number) => {
