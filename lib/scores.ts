@@ -60,36 +60,28 @@ function calcWeatherComponent(
   return { score, value: `${windLabel}${tempLabel}` };
 }
 
-export interface PitchMatchupResult {
-  earned: number;
-  max: number;
-  value: string;    // short reason shown in score breakdown
-  detail: string;   // inline numbers: "FB 52% · BR 35% | Chase 31% · vs BR .195"
-  delta: number;    // signed delta from neutral (-4 to +4)
-}
-
-/** Derive a pitch matchup score. Returns null when no arsenal/discipline data is available. */
+/** Derive a pitch matchup score component (-8 to +8) and readable label */
 export function calcPitchMatchup(
   batter: MLBBatter,
   pitcher: MLBPitcher
-): PitchMatchupResult | null {
-  const hasArsenal    = pitcher.fastballPct !== undefined || pitcher.breakingPct !== undefined;
-  const hasDiscipline = batter.chasePct !== undefined || batter.baVsBreaking !== undefined || batter.baVsFastball !== undefined;
-  if (!hasArsenal && !hasDiscipline) return null;
-
+): { earned: number; max: number; value: string } {
   let delta = 0;
-  let reason = "neutral mix";
+  const notes: string[] = [];
+
+  const hasArsenal = pitcher.fastballPct !== undefined || pitcher.breakingPct !== undefined;
+  const hasDiscipline = batter.chasePct !== undefined || batter.baVsBreaking !== undefined;
+  if (!hasArsenal && !hasDiscipline) return { earned: 4, max: 8, value: "—" };
 
   // Breaking ball matchup
   const brPct = pitcher.breakingPct ?? 0;
   if (brPct > 25) {
     if (batter.baVsBreaking !== undefined) {
-      if (batter.baVsBreaking >= 0.260)     { delta += 2; reason = `handles breaking balls (.${Math.round(batter.baVsBreaking * 1000)})`; }
-      else if (batter.baVsBreaking < 0.220) { delta -= 2; reason = `struggles vs breaking (.${Math.round(batter.baVsBreaking * 1000)})`; }
+      if (batter.baVsBreaking >= 0.260)      { delta += 2; notes.push(`hits breaking balls (.${Math.round(batter.baVsBreaking * 1000)})`); }
+      else if (batter.baVsBreaking < 0.220)  { delta -= 2; notes.push(`struggles vs breaking (.${Math.round(batter.baVsBreaking * 1000)})`); }
     }
     if (batter.whiffVsBreaking !== undefined && batter.whiffVsBreaking > 35) {
       delta -= 1;
-      if (delta < 0) reason = `high whiff vs breaking (${batter.whiffVsBreaking.toFixed(0)}%)`;
+      notes.push(`high whiff vs breaking (${batter.whiffVsBreaking.toFixed(0)}%)`);
     }
   }
 
@@ -97,8 +89,8 @@ export function calcPitchMatchup(
   const fbPct = pitcher.fastballPct ?? 0;
   if (fbPct > 45) {
     if (batter.baVsFastball !== undefined) {
-      if (batter.baVsFastball >= 0.290)     { delta += 2; if (delta > 0) reason = `strong vs fastball (.${Math.round(batter.baVsFastball * 1000)})`; }
-      else if (batter.baVsFastball < 0.230) { delta -= 1; if (delta < 0) reason = `below avg vs fastball`; }
+      if (batter.baVsFastball >= 0.290)      { delta += 2; notes.push(`strong vs fastball (.${Math.round(batter.baVsFastball * 1000)})`); }
+      else if (batter.baVsFastball < 0.230)  { delta -= 1; notes.push(`below avg vs fastball`); }
     }
   }
 
@@ -106,31 +98,17 @@ export function calcPitchMatchup(
   if (pitcher.chaseInducePct !== undefined && batter.chasePct !== undefined) {
     if (pitcher.chaseInducePct > 32 && batter.chasePct > 32) {
       delta -= 2;
-      reason = `chases (${batter.chasePct.toFixed(0)}%) vs deceptive pitcher`;
+      notes.push(`chases pitches (${batter.chasePct.toFixed(0)}%) vs deceptive pitcher`);
     } else if (pitcher.zonePct !== undefined && pitcher.zonePct < 44 && batter.chasePct < 26) {
       delta += 1;
-      if (delta > 0) reason = `disciplined eye vs off-zone pitcher`;
+      notes.push(`disciplined eye vs off-zone pitcher`);
     }
   }
 
-  // Build inline detail string from raw numbers
-  const pitcherParts: string[] = [];
-  if (pitcher.fastballPct !== undefined) pitcherParts.push(`FB ${pitcher.fastballPct.toFixed(0)}%`);
-  if (pitcher.breakingPct !== undefined) pitcherParts.push(`BR ${pitcher.breakingPct.toFixed(0)}%`);
-  if (pitcher.zonePct     !== undefined) pitcherParts.push(`Zone ${pitcher.zonePct.toFixed(0)}%`);
-
-  const batterParts: string[] = [];
-  if (batter.chasePct      !== undefined) batterParts.push(`Chase ${batter.chasePct.toFixed(0)}%`);
-  if (batter.baVsFastball  !== undefined) batterParts.push(`vsFB .${Math.round(batter.baVsFastball  * 1000)}`);
-  if (batter.baVsBreaking  !== undefined) batterParts.push(`vsBR .${Math.round(batter.baVsBreaking  * 1000)}`);
-
-  const detail = [
-    pitcherParts.length ? `P: ${pitcherParts.join(" · ")}` : "",
-    batterParts.length  ? `B: ${batterParts.join(" · ")}`  : "",
-  ].filter(Boolean).join("  |  ");
-
+  // Map delta (-6 to +6) onto earned (0–8), baseline 4
   const earned = clamp(4 + delta, 8);
-  return { earned, max: 8, value: reason, detail, delta };
+  const value = notes[0] ?? (delta > 0 ? "slight advantage" : delta < 0 ? "slight disadvantage" : "neutral");
+  return { earned, max: 8, value };
 }
 
 /**
@@ -288,10 +266,8 @@ export function calcHitScoreBreakdown(
   let pitchMatchupScore = 0;
   if (pitcher) {
     const pm = calcPitchMatchup(batter, pitcher);
-    if (pm) {
-      pitchMatchupScore = pm.earned - 4;
-      components.push({ label: "Pitch Matchup", earned: pm.earned, max: pm.max, value: pm.value });
-    }
+    pitchMatchupScore = pm.earned - 4; // offset from neutral baseline so it doesn't double-count
+    components.push({ label: "Pitch Matchup", earned: pm.earned, max: pm.max, value: pm.value });
   }
 
   const total = Math.min(100, Math.max(0, Math.round(
