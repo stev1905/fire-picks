@@ -36,6 +36,54 @@ function describeCode(code: number): { condition: string; icon: string } {
   return { condition: "Unknown", icon: "🌡️" };
 }
 
+export interface WindProfile {
+  type: "out" | "in" | "ltr" | "rtl" | "calm";
+  label: string;
+  blurb: string;
+  favoredHand: "L" | "R" | "both" | null;
+}
+
+export function analyzeWindProfile(weather: WeatherData, cfBearing: number): WindProfile {
+  if (weather.windMph < 4) {
+    return { type: "calm", label: "Calm winds", blurb: "Neutral conditions — wind not a factor today.", favoredHand: null };
+  }
+  // windDeg = where wind comes FROM; windTo = where it's blowing TO
+  const windTo = (weather.windDeg + 180) % 360;
+  const diff = ((windTo - cfBearing) + 360) % 360;
+  const mph = weather.windMph;
+
+  if (diff <= 45 || diff >= 315) {
+    return {
+      type: "out",
+      label: `↑ Blowing Out · ${mph}mph`,
+      blurb: "Tailwind carrying balls toward the outfield — good day for power hitters. Expect more balls to carry to the warning track and beyond.",
+      favoredHand: "both",
+    };
+  }
+  if (diff >= 135 && diff <= 225) {
+    return {
+      type: "in",
+      label: `↓ Blowing In · ${mph}mph`,
+      blurb: "Wind coming in from the outfield — balls staying in the park. Lean hit props over HR props today.",
+      favoredHand: null,
+    };
+  }
+  if (diff > 45 && diff < 135) {
+    return {
+      type: "ltr",
+      label: `→ Left to Right · ${mph}mph`,
+      blurb: "Wind pushing toward right field — left-handed pull hitters get a boost. Righties pulling to left field will fight resistance.",
+      favoredHand: "L",
+    };
+  }
+  return {
+    type: "rtl",
+    label: `← Right to Left · ${mph}mph`,
+    blurb: "Wind pushing toward left field — right-handed pull hitters get a boost. Lefties pulling to right field will fight resistance.",
+    favoredHand: "R",
+  };
+}
+
 export async function getGameWeather(venueId: number, gameDate: string): Promise<GameWeather> {
   if (isIndoorVenue(venueId)) return { indoor: true };
 

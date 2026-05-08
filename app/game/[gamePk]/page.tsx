@@ -6,8 +6,10 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { Badge } from "@/components/ui/badge";
 import { PitcherCard } from "@/components/PitcherCard";
 import { LineupSorter } from "@/components/LineupSorter";
-import { getGameWeather } from "@/lib/weather";
-import type { GameWeather } from "@/lib/weather";
+import { getGameWeather, analyzeWindProfile } from "@/lib/weather";
+import type { GameWeather, WindProfile } from "@/lib/weather";
+import { getParkData } from "@/lib/parkFactors";
+import type { MLBBatter } from "@/types/mlb";
 
 async function getSnapshot(): Promise<DailySnapshot | null> {
   try {
@@ -26,6 +28,102 @@ function parkLabel(factor: number) {
   if (factor <= 0.92) return { label: "Pitcher Friendly", color: "text-red-500 dark:text-red-400" };
   if (factor <= 0.96) return { label: "Slight Pitcher Friendly", color: "text-orange-500 dark:text-orange-400" };
   return { label: "Neutral Park", color: "text-muted-foreground" };
+}
+
+function pickWindHitters(lineup: MLBBatter[], profile: WindProfile, limit = 3): MLBBatter[] {
+  return lineup
+    .map((b) => {
+      let score = -1;
+      if (profile.type === "out") {
+        score = b.last3HR * 3 + b.last6HR * 1.5 + b.seasonSLG * 5;
+      } else if (profile.type === "in") {
+        score = b.last3AVG * 8 + b.last10AVG * 3 + b.hittingStreak * 0.08;
+      } else if (profile.type === "ltr") {
+        if (b.hand === "L" || b.hand === "S") score = b.last3HR * 3 + b.seasonSLG * 5 + b.last6HR;
+      } else if (profile.type === "rtl") {
+        if (b.hand === "R" || b.hand === "S") score = b.last3HR * 3 + b.seasonSLG * 5 + b.last6HR;
+      }
+      return { b, score };
+    })
+    .filter((x) => x.score > 0)
+    .sort((a, b) => b.score - a.score)
+    .slice(0, limit)
+    .map((x) => x.b);
+}
+
+function hitterStat(b: MLBBatter, profile: WindProfile): string {
+  if (profile.type === "in") {
+    return b.last3AVG > 0 ? `.${Math.round(b.last3AVG * 1000)} L3` : `${b.hittingStreak}g streak`;
+  }
+  if (b.last3HR > 0) return `${b.last3HR} HR L3`;
+  if (b.last6HR > 0) return `${b.last6HR} HR L6`;
+  return b.seasonSLG > 0 ? `.${Math.round(b.seasonSLG * 1000)} SLG` : "";
+}
+
+function WindInsightSection({
+  profile,
+  awayLineup,
+  homeLineup,
+  awayAbbr,
+  homeAbbr,
+}: {
+  profile: WindProfile;
+  awayLineup: MLBBatter[];
+  homeLineup: MLBBatter[];
+  awayAbbr: string;
+  homeAbbr: string;
+}) {
+  if (profile.type === "calm") return null;
+
+  const awayPicks = pickWindHitters(awayLineup, profile);
+  const homePicks = pickWindHitters(homeLineup, profile);
+  if (awayPicks.length === 0 && homePicks.length === 0) return null;
+
+  const typeColor =
+    profile.type === "out" ? "text-green-500 dark:text-green-400" :
+    profile.type === "in"  ? "text-blue-500 dark:text-blue-400" :
+    "text-amber-500 dark:text-amber-400";
+
+  const handLabel = profile.favoredHand === "L" ? "LHH" : profile.favoredHand === "R" ? "RHH" : null;
+
+  return (
+    <div className="bg-card border border-border rounded-xl p-4 space-y-3">
+      {/* Wind label + blurb */}
+      <div>
+        <div className={`text-sm font-bold ${typeColor}`}>{profile.label}</div>
+        <div className="text-xs text-muted-foreground mt-0.5">{profile.blurb}</div>
+      </div>
+
+      {/* Hitter columns */}
+      {(awayPicks.length > 0 || homePicks.length > 0) && (
+        <div className="grid grid-cols-2 gap-3 pt-1 border-t border-border">
+          {[{ abbr: awayAbbr, picks: awayPicks }, { abbr: homeAbbr, picks: homePicks }].map(({ abbr, picks }) => (
+            <div key={abbr}>
+              <div className="text-[10px] font-semibold text-muted-foreground uppercase tracking-wide mb-1.5">
+                {abbr} {handLabel ? `· ${handLabel}` : "· Power"}
+              </div>
+              <div className="space-y-1">
+                {picks.map((b) => (
+                  <div key={b.id} className="flex items-center justify-between gap-2">
+                    <div className="flex items-center gap-1 min-w-0">
+                      <span className="text-xs font-medium truncate">{b.name}</span>
+                      <span className="text-[9px] text-muted-foreground shrink-0">({b.hand})</span>
+                    </div>
+                    <span className="text-[10px] font-mono text-muted-foreground shrink-0">
+                      {hitterStat(b, profile)}
+                    </span>
+                  </div>
+                ))}
+                {picks.length === 0 && (
+                  <div className="text-[10px] text-muted-foreground">No strong matches</div>
+                )}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
 }
 
 function WeatherWidget({ weather }: { weather: GameWeather }) {
@@ -62,6 +160,10 @@ export default async function GamePage({
   if (!game) notFound();
 
   const weather = await getGameWeather(game.venueId ?? 0, game.gameDate);
+  const parkData = getParkData(game.venueId ?? 0);
+  const windProfile = !weather.indoor && parkData.cfBearing !== undefined
+    ? analyzeWindProfile(weather, parkData.cfBearing)
+    : null;
 
   const gameTime = new Date(game.gameDate).toLocaleTimeString("en-US", {
     hour: "numeric",
@@ -131,6 +233,17 @@ export default async function GamePage({
           </div>
         </div>
       </div>
+
+      {/* Wind insight */}
+      {windProfile && (
+        <WindInsightSection
+          profile={windProfile}
+          awayLineup={game.awayLineup}
+          homeLineup={game.homeLineup}
+          awayAbbr={game.awayTeam.abbreviation}
+          homeAbbr={game.homeTeam.abbreviation}
+        />
+      )}
 
       {/* Tabs */}
       <Tabs defaultValue="away">
