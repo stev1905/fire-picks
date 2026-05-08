@@ -8,7 +8,7 @@ import { PitcherCard } from "@/components/PitcherCard";
 import { LineupSorter } from "@/components/LineupSorter";
 import { getGameWeather, analyzeWindProfile } from "@/lib/weather";
 import type { GameWeather, WindProfile } from "@/lib/weather";
-import { getParkData } from "@/lib/parkFactors";
+import { getParkData, getParkAsymmetryNote } from "@/lib/parkFactors";
 import type { MLBBatter } from "@/types/mlb";
 
 async function getSnapshot(): Promise<DailySnapshot | null> {
@@ -66,12 +66,16 @@ function WindInsightSection({
   homeLineup,
   awayAbbr,
   homeAbbr,
+  parkNote,
+  humidity,
 }: {
   profile: WindProfile;
   awayLineup: MLBBatter[];
   homeLineup: MLBBatter[];
   awayAbbr: string;
   homeAbbr: string;
+  parkNote: string | null;
+  humidity?: number;
 }) {
   if (profile.type === "calm") return null;
 
@@ -86,6 +90,12 @@ function WindInsightSection({
 
   const handLabel = profile.favoredHand === "L" ? "LHH" : profile.favoredHand === "R" ? "RHH" : null;
 
+  // Humidity note — humid air is slightly less dense, so balls carry marginally farther
+  const humidityNote =
+    humidity !== undefined && humidity >= 75 ? `💧 ${humidity}% humidity — air is slightly less dense, modest boost to ball carry` :
+    humidity !== undefined && humidity <= 30 ? `🌵 ${humidity}% humidity — dry air today, minimal effect on carry` :
+    null;
+
   return (
     <div className="bg-card border border-border rounded-xl p-4 space-y-3">
       {/* Wind label + blurb */}
@@ -93,6 +103,18 @@ function WindInsightSection({
         <div className={`text-sm font-bold ${typeColor}`}>{profile.label}</div>
         <div className="text-xs text-muted-foreground mt-0.5">{profile.blurb}</div>
       </div>
+
+      {/* Park asymmetry note */}
+      {parkNote && (
+        <div className="text-xs bg-muted/60 rounded-lg px-3 py-2 text-muted-foreground border border-border">
+          🏟️ {parkNote}
+        </div>
+      )}
+
+      {/* Humidity note */}
+      {humidityNote && (
+        <div className="text-xs text-muted-foreground/80">{humidityNote}</div>
+      )}
 
       {/* Hitter columns */}
       {(awayPicks.length > 0 || homePicks.length > 0) && (
@@ -136,6 +158,9 @@ function WeatherWidget({ weather }: { weather: GameWeather }) {
         {weather.icon} {weather.tempF}°F · {weather.windMph} mph {weather.windDir}
       </div>
       <div className="text-muted-foreground">{weather.condition}</div>
+      {weather.humidity !== undefined && (
+        <div className="text-muted-foreground">💧 {weather.humidity}% humidity</div>
+      )}
       {weather.precipChance >= 20 && (
         <div className="text-blue-400">🌧️ {weather.precipChance}% precip</div>
       )}
@@ -242,6 +267,8 @@ export default async function GamePage({
           homeLineup={game.homeLineup}
           awayAbbr={game.awayTeam.abbreviation}
           homeAbbr={game.homeTeam.abbreviation}
+          parkNote={getParkAsymmetryNote(game.venueId, windProfile.type)}
+          humidity={!weather.indoor ? weather.humidity : undefined}
         />
       )}
 

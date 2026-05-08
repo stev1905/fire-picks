@@ -9,6 +9,7 @@ export interface WeatherData {
   precipChance: number;
   condition: string;
   icon: string;
+  humidity?: number; // relative humidity % at game time
 }
 
 export interface IndoorData {
@@ -94,7 +95,7 @@ export async function getGameWeather(venueId: number, gameDate: string): Promise
     const url = new URL("https://api.open-meteo.com/v1/forecast");
     url.searchParams.set("latitude", coords.lat.toString());
     url.searchParams.set("longitude", coords.lng.toString());
-    url.searchParams.set("hourly", "temperature_2m,precipitation_probability,windspeed_10m,winddirection_10m,weathercode");
+    url.searchParams.set("hourly", "temperature_2m,precipitation_probability,windspeed_10m,winddirection_10m,weathercode,relative_humidity_2m");
     url.searchParams.set("temperature_unit", "fahrenheit");
     url.searchParams.set("windspeed_unit", "mph");
     url.searchParams.set("timezone", "UTC");
@@ -117,6 +118,7 @@ export async function getGameWeather(venueId: number, gameDate: string): Promise
 
     const windDeg: number = json.hourly.winddirection_10m[idx] ?? 0;
     const { condition, icon } = describeCode(json.hourly.weathercode[idx]);
+    const humidity: number | undefined = json.hourly.relative_humidity_2m?.[idx] ?? undefined;
     return {
       indoor: false,
       tempF: Math.round(json.hourly.temperature_2m[idx]),
@@ -126,6 +128,7 @@ export async function getGameWeather(venueId: number, gameDate: string): Promise
       precipChance: json.hourly.precipitation_probability[idx] ?? 0,
       condition,
       icon,
+      humidity,
     };
   } catch {
     return { indoor: true };
