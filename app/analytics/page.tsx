@@ -6,6 +6,7 @@ import {
   getHottestHRHitters,
   getHottestPitchers,
   getPitchersToday,
+  getHitConsistency,
 } from "@/lib/analytics";
 import { getGameWeather, analyzeWindProfile } from "@/lib/weather";
 import { getParkData } from "@/lib/parkFactors";
@@ -14,6 +15,7 @@ import { HitterChart } from "@/components/analytics/HitterChart";
 import { HRChart } from "@/components/analytics/HRChart";
 import { PitcherChart } from "@/components/analytics/PitcherChart";
 import { PitchersTodayTable } from "@/components/analytics/PitchersTodayTable";
+import { HitConsistencyTable } from "@/components/analytics/HitConsistencyTable";
 import { ChefLoading } from "@/components/ChefLoading";
 
 async function getSnapshot(): Promise<DailySnapshot | null> {
@@ -169,12 +171,13 @@ export default async function AnalyticsPage() {
   const snapshot = await getSnapshot();
   if (!snapshot) return <ChefLoading message="Chefing up today's analytics..." />;
 
-  const [hotHitters, hotHR, hotPitchers, pitchersToday, parkRankings] = await Promise.all([
+  const [hotHitters, hotHR, hotPitchers, pitchersToday, parkRankings, hitConsistency] = await Promise.all([
     Promise.resolve(getHottestHitters(snapshot)),
     Promise.resolve(getHottestHRHitters(snapshot)),
     Promise.resolve(getHottestPitchers(snapshot)),
     Promise.resolve(getPitchersToday(snapshot)),
     getParkHRRankings(snapshot),
+    Promise.resolve(getHitConsistency(snapshot)),
   ]);
 
   return (
@@ -235,6 +238,17 @@ export default async function AnalyticsPage() {
         <p className="text-[10px] text-muted-foreground mt-1.5 ml-1">
           Click column headers to sort · green = tough, red = hittable
         </p>
+      </section>
+
+      {/* Hit Consistency */}
+      <section>
+        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-1">
+          Season Hit Consistency
+        </h2>
+        <p className="text-xs text-muted-foreground mb-4">
+          Top 40 batters by hit rate across rolling windows · click name to open game · click headers to sort
+        </p>
+        <HitConsistencyTable data={hitConsistency} />
       </section>
 
       {/* Pitcher trends */}

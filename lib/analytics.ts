@@ -142,6 +142,64 @@ export function getPitchersToday(snapshot: DailySnapshot): PitcherTodayRow[] {
   return rows.sort((a, b) => a.avgHitsPerStart - b.avgHitsPerStart);
 }
 
+export interface HitConsistencyRow {
+  id: number;
+  name: string;
+  teamAbbreviation: string;
+  gamePk: number;
+  opposingPitcherName: string;
+  opposingPitcherHand: "L" | "R" | null;
+  pitcherL3Hits: number;
+  hitRate10: number;
+  hitRate20: number;
+  hitRate30: number;
+  hitRate40: number;
+  consistencyScore: number; // weighted composite for default sort
+}
+
+/** Top 40 batters by season-long hit consistency across 10/20/30/40 game windows */
+export function getHitConsistency(snapshot: DailySnapshot): HitConsistencyRow[] {
+  const rows: HitConsistencyRow[] = [];
+
+  for (const game of snapshot.games) {
+    const addBatters = (
+      lineup: MLBBatter[],
+      teamAbbr: string,
+      opposingPitcher: MLBPitcher | undefined,
+    ) => {
+      for (const b of lineup) {
+        if (!b.hitRate10 && !b.hitRate20) continue; // skip if no game log data
+        const consistencyScore =
+          (b.hitRate10 ?? 0) * 0.4 +
+          (b.hitRate20 ?? 0) * 0.3 +
+          (b.hitRate30 ?? 0) * 0.2 +
+          (b.hitRate40 ?? 0) * 0.1;
+        rows.push({
+          id: b.id,
+          name: b.name,
+          teamAbbreviation: teamAbbr,
+          gamePk: game.gamePk,
+          opposingPitcherName: opposingPitcher?.name ?? "TBD",
+          opposingPitcherHand: opposingPitcher?.hand ?? null,
+          pitcherL3Hits: opposingPitcher?.last3HitsAllowed ?? 0,
+          hitRate10: b.hitRate10 ?? 0,
+          hitRate20: b.hitRate20 ?? 0,
+          hitRate30: b.hitRate30 ?? 0,
+          hitRate40: b.hitRate40 ?? 0,
+          consistencyScore,
+        });
+      }
+    };
+
+    addBatters(game.awayLineup, game.awayTeam.abbreviation, game.homeStartingPitcher);
+    addBatters(game.homeLineup, game.homeTeam.abbreviation, game.awayStartingPitcher);
+  }
+
+  return rows
+    .sort((a, b) => b.consistencyScore - a.consistencyScore)
+    .slice(0, 40);
+}
+
 /** Top 10 hottest pitchers by ERA + K rate */
 export function getHottestPitchers(snapshot: DailySnapshot): RankedPitcher[] {
   const pitchers: RankedPitcher[] = [];

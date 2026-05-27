@@ -386,16 +386,28 @@ export async function fetchBatterStats(playerId: number, season: number): Promis
       hand = (bats === "L" ? "L" : bats === "S" ? "S" : "R") as "L" | "R" | "S";
     } catch {}
 
-    // Game logs — last 10
+    // Game logs — last 40 for consistency rates, last 10 for chart
     let last10Games: BatterGameLog[] = [];
     let last3AVG = 0, last6AVG = 0, last10AVG = 0;
     let last3SLG = 0, last6SLG = 0, last10SLG = 0;
     let last3HR = 0, last6HR = 0, last10HR = 0;
     let hittingStreak = 0;
+    let hitRate10 = 0, hitRate20 = 0, hitRate30 = 0, hitRate40 = 0;
 
     if (gameLogRes.status === "fulfilled") {
       const splits = gameLogRes.value.stats?.[0]?.splits ?? [];
-      const recent = splits.slice(-10).reverse(); // most recent first
+      const recent40 = splits.slice(-40).reverse(); // up to 40 most recent, newest first
+      const recent = recent40.slice(0, 10);
+
+      const hitRateFor = (n: number) => {
+        const w = recent40.slice(0, n);
+        if (w.length === 0) return 0;
+        return w.filter((g: any) => (g.stat.hits ?? 0) > 0).length / w.length;
+      };
+      hitRate10 = hitRateFor(10);
+      hitRate20 = hitRateFor(20);
+      hitRate30 = hitRateFor(30);
+      hitRate40 = hitRateFor(40);
 
       last10Games = recent.map((s: any) => ({
         date: s.date,
@@ -458,6 +470,7 @@ export async function fetchBatterStats(playerId: number, season: number): Promis
       last3SLG, last6SLG, last10SLG,
       last3HR, last6HR, last10HR,
       hittingStreak,
+      hitRate10, hitRate20, hitRate30, hitRate40,
       avgVsLeft, avgVsRight,
       slgVsLeft, slgVsRight,
       last10Games,

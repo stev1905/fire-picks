@@ -81,6 +81,11 @@ export interface MLBBatter {
   slgVsRight: number;
   // Game logs for charts
   last10Games: BatterGameLog[];
+  // Hit consistency rates (hits in X games / X)
+  hitRate10?: number;
+  hitRate20?: number;
+  hitRate30?: number;
+  hitRate40?: number;
   // Statcast (Baseball Savant)
   xBA?: number;
   barrelPct?: number;
