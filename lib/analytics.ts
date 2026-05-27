@@ -154,6 +154,7 @@ export interface HitConsistencyRow {
   hitRate20: number;
   hitRate30: number;
   hitRate40: number;
+  gameLogCount: number;
   consistencyScore: number; // weighted composite for default sort
 }
 
@@ -168,7 +169,7 @@ export function getHitConsistency(snapshot: DailySnapshot): HitConsistencyRow[] 
       opposingPitcher: MLBPitcher | undefined,
     ) => {
       for (const b of lineup) {
-        if (!b.hitRate10 && !b.hitRate20) continue; // skip if no game log data
+        if ((b.gameLogCount ?? 0) < 30) continue; // require at least 30 games played
         const consistencyScore =
           (b.hitRate10 ?? 0) * 0.4 +
           (b.hitRate20 ?? 0) * 0.3 +
@@ -186,6 +187,7 @@ export function getHitConsistency(snapshot: DailySnapshot): HitConsistencyRow[] 
           hitRate20: b.hitRate20 ?? 0,
           hitRate30: b.hitRate30 ?? 0,
           hitRate40: b.hitRate40 ?? 0,
+          gameLogCount: b.gameLogCount ?? 0,
           consistencyScore,
         });
       }

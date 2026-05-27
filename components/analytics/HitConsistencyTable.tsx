@@ -11,13 +11,26 @@ function pct(n: number): string {
   return n.toFixed(3).replace(/^0/, "");
 }
 
-function PctCell({ value }: { value: number }) {
+function fraction(rate: number, window: number, gameLogCount: number): string {
+  const actual = Math.min(window, gameLogCount);
+  const hits = Math.round(rate * actual);
+  return `${hits}/${actual}`;
+}
+
+function PctCell({ value, window, gameLogCount }: { value: number; window: number; gameLogCount: number }) {
   const color =
     value >= 0.8 ? "text-green-600 dark:text-green-400" :
     value >= 0.6 ? "text-amber-600 dark:text-amber-400" :
     value >= 0.4 ? "text-muted-foreground" :
     "text-red-500 dark:text-red-400";
-  return <span className={`font-mono font-semibold ${color}`}>{pct(value)}</span>;
+  return (
+    <span
+      className={`font-mono font-semibold cursor-default ${color}`}
+      title={fraction(value, window, gameLogCount)}
+    >
+      {pct(value)}
+    </span>
+  );
 }
 
 interface SortHeaderProps {
@@ -33,7 +46,7 @@ function SortHeader({ label, col, current, dir, onSort, className = "" }: SortHe
   const active = current === col;
   return (
     <th
-      className={`px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground cursor-pointer select-none whitespace-nowrap hover:text-foreground transition-colors ${className}`}
+      className={`px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground cursor-pointer select-none whitespace-nowrap hover:text-foreground transition-colors ${className}`}
       onClick={() => onSort(col)}
     >
       {label}
@@ -80,13 +93,13 @@ export function HitConsistencyTable({ data }: Props) {
   return (
     <div className="bg-card border border-border rounded-2xl overflow-hidden">
       <div className="overflow-x-auto">
-        <div className="overflow-y-auto max-h-[440px]">
+        <div className="overflow-y-auto max-h-[380px]">
           <table className="w-full text-sm border-collapse">
             <thead className="sticky top-0 z-10 bg-card border-b border-border">
               <tr>
-                <th className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground w-8 shrink-0">#</th>
-                <th className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground min-w-[130px]">Name</th>
-                <th className="px-3 py-2.5 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground min-w-[140px]">Matchup</th>
+                <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground w-8 shrink-0">#</th>
+                <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground min-w-[130px]">Name</th>
+                <th className="px-3 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground min-w-[140px]">Matchup</th>
                 <SortHeader label="L3 Hits" col="pitcherL3Hits" current={sortKey} dir={sortDir} onSort={handleSort} className="min-w-[72px]" />
                 <SortHeader label="L10%" col="hitRate10" current={sortKey} dir={sortDir} onSort={handleSort} className="min-w-[68px]" />
                 <SortHeader label="L20%" col="hitRate20" current={sortKey} dir={sortDir} onSort={handleSort} className="min-w-[68px]" />
@@ -97,17 +110,17 @@ export function HitConsistencyTable({ data }: Props) {
             <tbody className="divide-y divide-border">
               {sorted.map((row, i) => (
                 <tr key={`${row.id}-${row.gamePk}`} className="hover:bg-muted/40 transition-colors">
-                  <td className="px-3 py-2.5 text-[11px] text-muted-foreground tabular-nums">{i + 1}</td>
-                  <td className="px-3 py-2.5">
+                  <td className="px-3 py-1.5 text-[11px] text-muted-foreground tabular-nums">{i + 1}</td>
+                  <td className="px-3 py-1.5">
                     <Link
                       href={`/game/${row.gamePk}`}
                       className="font-semibold text-[12px] hover:text-primary transition-colors hover:underline underline-offset-2"
                     >
                       {row.name}
                     </Link>
-                    <div className="text-[10px] text-muted-foreground mt-0.5">{row.teamAbbreviation}</div>
+                    <div className="text-[10px] text-muted-foreground">{row.teamAbbreviation}</div>
                   </td>
-                  <td className="px-3 py-2.5">
+                  <td className="px-3 py-1.5">
                     <div className="flex items-center gap-1.5">
                       <span className="text-[11px] text-foreground/80 truncate max-w-[100px]">
                         {row.opposingPitcherName}
@@ -123,13 +136,13 @@ export function HitConsistencyTable({ data }: Props) {
                       )}
                     </div>
                   </td>
-                  <td className="px-3 py-2.5 text-[12px] font-mono text-muted-foreground tabular-nums">
+                  <td className="px-3 py-1.5 text-[12px] font-mono text-muted-foreground tabular-nums">
                     {row.pitcherL3Hits}
                   </td>
-                  <td className="px-3 py-2.5"><PctCell value={row.hitRate10} /></td>
-                  <td className="px-3 py-2.5"><PctCell value={row.hitRate20} /></td>
-                  <td className="px-3 py-2.5"><PctCell value={row.hitRate30} /></td>
-                  <td className="px-3 py-2.5"><PctCell value={row.hitRate40} /></td>
+                  <td className="px-3 py-1.5"><PctCell value={row.hitRate10} window={10} gameLogCount={row.gameLogCount} /></td>
+                  <td className="px-3 py-1.5"><PctCell value={row.hitRate20} window={20} gameLogCount={row.gameLogCount} /></td>
+                  <td className="px-3 py-1.5"><PctCell value={row.hitRate30} window={30} gameLogCount={row.gameLogCount} /></td>
+                  <td className="px-3 py-1.5"><PctCell value={row.hitRate40} window={40} gameLogCount={row.gameLogCount} /></td>
                 </tr>
               ))}
             </tbody>

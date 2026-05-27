@@ -86,6 +86,7 @@ export interface MLBBatter {
   hitRate20?: number;
   hitRate30?: number;
   hitRate40?: number;
+  gameLogCount?: number; // number of game log entries available (up to 40)
   // Statcast (Baseball Savant)
   xBA?: number;
   barrelPct?: number;

@@ -393,10 +393,12 @@ export async function fetchBatterStats(playerId: number, season: number): Promis
     let last3HR = 0, last6HR = 0, last10HR = 0;
     let hittingStreak = 0;
     let hitRate10 = 0, hitRate20 = 0, hitRate30 = 0, hitRate40 = 0;
+    let gameLogCount = 0;
 
     if (gameLogRes.status === "fulfilled") {
       const splits = gameLogRes.value.stats?.[0]?.splits ?? [];
       const recent40 = splits.slice(-40).reverse(); // up to 40 most recent, newest first
+      gameLogCount = recent40.length;
       const recent = recent40.slice(0, 10);
 
       const hitRateFor = (n: number) => {
@@ -471,6 +473,7 @@ export async function fetchBatterStats(playerId: number, season: number): Promis
       last3HR, last6HR, last10HR,
       hittingStreak,
       hitRate10, hitRate20, hitRate30, hitRate40,
+      gameLogCount,
       avgVsLeft, avgVsRight,
       slgVsLeft, slgVsRight,
       last10Games,
