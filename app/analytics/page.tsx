@@ -2,21 +2,18 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import type { DailySnapshot } from "@/types/mlb";
 import {
-  getHottestHitters,
   getHottestHRHitters,
-  getHottestPitchers,
-  getPitchersToday,
   getHitConsistency,
+  buildPitcherAnalyticsRows,
 } from "@/lib/analytics";
 import { getGameWeather, analyzeWindProfile } from "@/lib/weather";
 import { getParkData } from "@/lib/parkFactors";
 import Link from "next/link";
-import { HitterChart } from "@/components/analytics/HitterChart";
 import { HRChart } from "@/components/analytics/HRChart";
-import { PitcherChart } from "@/components/analytics/PitcherChart";
-import { PitchersTodayTable } from "@/components/analytics/PitchersTodayTable";
+import { PitchingAnalyticsTable } from "@/components/analytics/PitchingAnalyticsTable";
 import { HitConsistencyTable } from "@/components/analytics/HitConsistencyTable";
 import { ChefLoading } from "@/components/ChefLoading";
+import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
 async function getSnapshot(): Promise<DailySnapshot | null> {
   try {
@@ -28,6 +25,7 @@ async function getSnapshot(): Promise<DailySnapshot | null> {
     return null;
   }
 }
+
 
 interface ParkHRRow {
   gamePk: number;
@@ -63,19 +61,12 @@ async function getParkHRRankings(snapshot: DailySnapshot): Promise<ParkHRRow[]> 
           0;
       }
 
-      // Park factor: 0–50 pts
       const parkScore = ((game.parkFactor - 0.88) / (1.24 - 0.88)) * 50;
-
-      // Temperature: warmer = better carry, 0–15 pts
       const tempScore = !weather.indoor
         ? Math.max(0, Math.min(15, ((weather.tempF - 60) / 40) * 15))
         : 7.5;
-
-      // Field dimensions: shorter avg pull distance = better, 0–10 pts
       const avgDist = (parkData.lf + parkData.rf) / 2;
       const dimScore = Math.max(0, ((365 - avgDist) / 65) * 10);
-
-      // Humidity: slightly less dense air above 70%, 0–5 pts
       const humScore =
         !weather.indoor && weather.humidity !== undefined
           ? Math.max(0, ((weather.humidity - 50) / 100) * 5)
@@ -126,12 +117,9 @@ function ParkHRRankingTable({ rows }: { rows: ParkHRRow[] }) {
             href={`/game/${row.gamePk}`}
             className="flex items-center gap-3 px-4 py-3 hover:bg-muted/50 transition-colors group"
           >
-            {/* Rank */}
             <span className="text-sm font-bold text-muted-foreground w-5 shrink-0 tabular-nums">
               {i + 1}
             </span>
-
-            {/* Venue + teams */}
             <div className="flex-1 min-w-0">
               <div className="text-sm font-semibold truncate group-hover:text-primary transition-colors">
                 {row.venue || `${row.awayTeam} @ ${row.homeTeam}`}
@@ -140,19 +128,13 @@ function ParkHRRankingTable({ rows }: { rows: ParkHRRow[] }) {
                 {row.awayTeam} @ {row.homeTeam}
               </div>
             </div>
-
-            {/* Park label */}
             <div className="hidden sm:block text-[10px] text-muted-foreground shrink-0 max-w-[110px] text-right">
               {row.parkLabel}
               <div className="font-mono">{row.parkFactor.toFixed(2)}</div>
             </div>
-
-            {/* Wind */}
             <div className={`hidden md:block text-[10px] font-medium shrink-0 w-32 text-right ${windColor(row.windType)}`}>
               {row.indoor ? "🏟️ Indoor" : (row.windLabel ?? "—")}
             </div>
-
-            {/* Score badge */}
             <div className={`text-sm font-black tabular-nums px-2.5 py-1 rounded-lg shrink-0 ${scoreBg(row.score)}`}>
               {row.score}
             </div>
@@ -171,18 +153,18 @@ export default async function AnalyticsPage() {
   const snapshot = await getSnapshot();
   if (!snapshot) return <ChefLoading message="Chefing up today's analytics..." />;
 
-  const [hotHitters, hotHR, hotPitchers, pitchersToday, parkRankings, hitConsistency] = await Promise.all([
-    Promise.resolve(getHottestHitters(snapshot)),
+  const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
+
+  const [hotHR, hitConsistency, parkRankings] = await Promise.all([
     Promise.resolve(getHottestHRHitters(snapshot)),
-    Promise.resolve(getHottestPitchers(snapshot)),
-    Promise.resolve(getPitchersToday(snapshot)),
-    getParkHRRankings(snapshot),
     Promise.resolve(getHitConsistency(snapshot)),
+    getParkHRRankings(snapshot),
   ]);
 
+  const allPitchers = buildPitcherAnalyticsRows([snapshot], today);
+
   return (
-    <div className="space-y-8">
-      {/* Header */}
+    <div className="space-y-6">
       <div>
         <h1 className="text-2xl font-bold">Analytics</h1>
         <p className="text-sm text-muted-foreground mt-1">
@@ -190,74 +172,65 @@ export default async function AnalyticsPage() {
         </p>
       </div>
 
-      {/* Ballpark HR Rankings */}
-      <section>
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-1">
-          Ballpark HR Rankings Today
-        </h2>
-        <p className="text-xs text-muted-foreground mb-4">
-          Scored by park factor, wind direction, temperature, humidity & field dimensions · click to open game
-        </p>
-        <ParkHRRankingTable rows={parkRankings} />
-      </section>
+      <Tabs defaultValue="hitters">
+        <TabsList className="mb-6">
+          <TabsTrigger value="hitters">Hitters Analytics</TabsTrigger>
+          <TabsTrigger value="pitching">Pitching Analytics</TabsTrigger>
+        </TabsList>
 
-      {/* Hitter trends */}
-      <section>
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-4">
-          Hottest Hitters
-        </h2>
-        <HitterChart
-          data={hotHitters}
-          title="Hottest Hitters"
-          subtitle="Ranked by recent AVG, streak & matchup favorability"
-          icon="🔥"
-          hot
-        />
-      </section>
+        {/* ── Hitters Tab ── */}
+        <TabsContent value="hitters">
+          <div className="space-y-8">
+            <section>
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-1">
+                Ballpark HR Rankings Today
+              </h2>
+              <p className="text-xs text-muted-foreground mb-4">
+                Scored by park factor, wind direction, temperature, humidity & field dimensions · click to open game
+              </p>
+              <ParkHRRankingTable rows={parkRankings} />
+            </section>
 
-      {/* HR trends */}
-      <section>
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-4">
-          Hottest HR Hitters
-        </h2>
-        <HRChart
-          data={hotHR}
-          title="Hottest HR Hitters"
-          subtitle="Most home runs in last 3 & 6 games"
-          icon="💣"
-          hot
-        />
-      </section>
+            <section>
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-4">
+                Hottest HR Hitters
+              </h2>
+              <HRChart
+                data={hotHR}
+                title="Hottest HR Hitters"
+                subtitle="Most home runs in last 3 & 6 games"
+                icon="💣"
+                hot
+              />
+            </section>
 
-      {/* Pitchers today */}
-      <section>
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-4">
-          Starters Today
-        </h2>
-        <PitchersTodayTable rows={pitchersToday} />
-        <p className="text-[10px] text-muted-foreground mt-1.5 ml-1">
-          Click column headers to sort · green = tough, red = hittable
-        </p>
-      </section>
+            <section>
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-1">
+                Season Hit Consistency
+              </h2>
+              <p className="text-xs text-muted-foreground mb-4">
+                Top 40 batters by hit rate across rolling windows · click name to open game · click headers to sort
+              </p>
+              <HitConsistencyTable data={hitConsistency} />
+            </section>
+          </div>
+        </TabsContent>
 
-      {/* Hit Consistency */}
-      <section>
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-1">
-          Season Hit Consistency
-        </h2>
-        <p className="text-xs text-muted-foreground mb-4">
-          Top 40 batters by hit rate across rolling windows · click name to open game · click headers to sort
-        </p>
-        <HitConsistencyTable data={hitConsistency} />
-      </section>
-
-      {/* Pitcher trends */}
-      <section>
-        <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-4">
-          Pitcher Trends
-        </h2>
-        <PitcherChart data={hotPitchers} />
-      </section>
+        {/* ── Pitching Tab ── */}
+        <TabsContent value="pitching">
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-1">
+                Starting Pitcher Analytics
+              </h2>
+              <p className="text-xs text-muted-foreground mb-4">
+                All starters from recent games · ▶ = pitching today · HH% = hard hit rate allowed · sort & filter by any stat
+              </p>
+            </div>
+            <PitchingAnalyticsTable rows={allPitchers} />
+          </div>
+        </TabsContent>
+      </Tabs>
     </div>
   );
 }

@@ -490,3 +490,154 @@ export function isBouncebackHR(batter: MLBBatter, hrScore: number): boolean {
   if (!last || last.hr > 0) return false; // hit HR last game
   return batter.last6HR >= 1 || batter.last10HR >= 2;
 }
+
+// Zone number → readable location label (catcher's perspective, RHH default)
+const ZONE_LABELS: Record<number, string> = {
+  1: "Up-In",   2: "Up",      3: "Up-Out",
+  4: "Mid-In",  5: "Heart",   6: "Mid-Out",
+  7: "Low-In",  8: "Low",     9: "Low-Out",
+  11: "Hi-Chase", 12: "Hi-Chase",
+  13: "Lo-Chase", 14: "Lo-Chase",
+};
+
+function zoneLabel(zone: number): string {
+  return ZONE_LABELS[zone] ?? `Zone ${zone}`;
+}
+
+// Is the zone in the lower third of the strike zone / low chase?
+function isLowZone(z: number) { return (z >= 7 && z <= 9) || z === 13 || z === 14; }
+// Is the zone a chase zone (outside the strike zone)?
+function isChaseZone(z: number) { return z >= 11; }
+
+/**
+ * Zone Fit — uses the pitcher's actual zone profile (where they throw most often
+ * and how effective they are there) against the batter's known tendencies.
+ *
+ * Returns { favor, label, detail } when a clear edge exists, null otherwise.
+ */
+export function calcZoneFit(
+  batter: MLBBatter,
+  pitcher: MLBPitcher
+): { favor: "pitcher" | "batter"; label: string; detail: string } | null {
+  const profile = pitcher.zoneProfile;
+
+  // ── Real zone data path ──────────────────────────────────────────────────────
+  if (profile && profile.length > 0) {
+    const top = profile[0]; // pitcher's most-used zone
+    let pitcherEdge = 0;
+    let batterEdge  = 0;
+    const pitcherNotes: string[] = [];
+    const batterNotes:  string[] = [];
+
+    // Zone xBA: how well batters have hit the pitcher in their favourite zone
+    if (top.xBA !== null) {
+      if (top.xBA < 0.210)       { pitcherEdge += 2; pitcherNotes.push(`xBA .${Math.round(top.xBA * 1000)} in ${zoneLabel(top.zone)}`); }
+      else if (top.xBA > 0.320)  { batterEdge  += 2; batterNotes.push(`batters rake in ${zoneLabel(top.zone)} (.${Math.round(top.xBA * 1000)} xBA)`); }
+    }
+
+    // Low-zone attacks → cross-ref batter's breaking ball profile
+    if (isLowZone(top.zone)) {
+      if ((batter.baVsBreaking ?? 0.240) < 0.215)     { pitcherEdge++; pitcherNotes.push("batter weak low"); }
+      else if ((batter.baVsBreaking ?? 0) > 0.265)     { batterEdge++;  batterNotes.push("batter handles low zone"); }
+      if ((batter.whiffVsBreaking ?? 0) > 35)          { pitcherEdge++; pitcherNotes.push(`batter whiffs low (${batter.whiffVsBreaking?.toFixed(0)}%)`); }
+    }
+
+    // Chase-zone attacks → batter's o-swing tendency
+    if (isChaseZone(top.zone)) {
+      if ((batter.chasePct ?? 0) > 32)   { pitcherEdge += 2; pitcherNotes.push(`batter chases (${batter.chasePct?.toFixed(0)}%)`); }
+      else if ((batter.chasePct ?? 100) < 24) { batterEdge++; batterNotes.push("disciplined eye"); }
+    }
+
+    // Overall pitcher effectiveness modifiers
+    if ((pitcher.whiffPct ?? 0) > 28)              { pitcherEdge++; pitcherNotes.push("high whiff%"); }
+    if ((pitcher.hardHitAllowedPct ?? 50) < 33)    { pitcherEdge++; pitcherNotes.push("limits hard contact"); }
+    if ((batter.hardHitPct ?? 0) > 46)             { batterEdge++;  batterNotes.push("batter hits it hard"); }
+
+    const label = zoneLabel(top.zone);
+    if (pitcherEdge - batterEdge >= 2) {
+      return { favor: "pitcher", label: `Zone Fit: ${label} ↓`, detail: pitcherNotes[0] ?? "pitcher zone edge" };
+    }
+    if (batterEdge - pitcherEdge >= 2) {
+      return { favor: "batter",  label: `Zone Fit: ${label} ↑`, detail: batterNotes[0]  ?? "batter zone edge" };
+    }
+    return null;
+  }
+
+  // ── Fallback: pitch-type proxy (no zone profile yet) ─────────────────────────
+  const fbPct  = pitcher.fastballPct  ?? 0;
+  const brPct  = pitcher.breakingPct  ?? 0;
+  const offPct = pitcher.offspeedPct  ?? 0;
+  if (fbPct === 0 && brPct === 0 && offPct === 0) return null;
+
+  const dominant: "FB" | "BR" | "OS" =
+    fbPct >= brPct && fbPct >= offPct ? "FB" : brPct >= offPct ? "BR" : "OS";
+
+  let pe = 0, be = 0;
+  const pn: string[] = [], bn: string[] = [];
+
+  if (dominant === "FB") {
+    if ((pitcher.kPct ?? 0) > 24)               { pe++; pn.push("high K%"); }
+    if ((pitcher.hardHitAllowedPct ?? 50) < 34) { pe++; pn.push("suppresses contact"); }
+    if (batter.baVsFastball !== undefined) {
+      if (batter.baVsFastball >= 0.285)          { be += 2; bn.push(`hits FB .${Math.round(batter.baVsFastball * 1000)}`); }
+      else if (batter.baVsFastball < 0.230)      { pe += 2; pn.push(`weak vs FB`); }
+    }
+    if ((batter.hardHitPct ?? 0) > 45) { be++; bn.push("hard contact"); }
+  } else if (dominant === "BR") {
+    if ((pitcher.whiffPct ?? 0) > 28)  { pe++; pn.push("high whiff%"); }
+    if ((pitcher.kPct ?? 0) > 22)      { pe++; pn.push("high K%"); }
+    if (batter.baVsBreaking !== undefined) {
+      if (batter.baVsBreaking >= 0.260)          { be += 2; bn.push(`handles breaking (.${Math.round(batter.baVsBreaking * 1000)})`); }
+      else if (batter.baVsBreaking < 0.215)      { pe += 2; pn.push(`weak vs breaking`); }
+    }
+    if ((batter.whiffVsBreaking ?? 0) > 35)      { pe++; pn.push("batter whiffs"); }
+    if ((batter.chasePct ?? 0) > 32 && brPct > 35) { pe++; pn.push("batter chases"); }
+  } else {
+    if ((pitcher.hardHitAllowedPct ?? 50) < 32) { pe++; pn.push("limits hard contact"); }
+    if ((pitcher.barrelAllowedPct ?? 10) < 6)   { pe++; pn.push("limits barrels"); }
+    if ((batter.barrelPct ?? 0) > 10)           { be++; bn.push("barrels ball"); }
+    if ((batter.hardHitPct ?? 0) > 48)          { be++; bn.push("hard contact"); }
+  }
+
+  const dl = dominant === "FB" ? "FB" : dominant === "BR" ? "Breaking" : "Offspeed";
+  if (pe - be >= 2) return { favor: "pitcher", label: `Zone Fit: ${dl} ↓`, detail: pn[0] ?? "pitcher edge" };
+  if (be - pe >= 2) return { favor: "batter",  label: `Zone Fit: ${dl} ↑`, detail: bn[0] ?? "batter edge" };
+  return null;
+}
+
+/**
+ * Pitcher sweet spot — dominant arsenal type + top zone location.
+ * Used as a standalone badge on PitcherCard.
+ */
+export function pitcherSweetSpot(
+  pitcher: MLBPitcher
+): { label: string; color: string } | null {
+  const fbPct  = pitcher.fastballPct  ?? 0;
+  const brPct  = pitcher.breakingPct  ?? 0;
+  const offPct = pitcher.offspeedPct  ?? 0;
+
+  if (fbPct === 0 && brPct === 0 && offPct === 0) return null;
+
+  const dominant = fbPct >= brPct && fbPct >= offPct ? "FB" : brPct >= offPct ? "Breaking" : "Offspeed";
+  const pct = Math.max(fbPct, brPct, offPct);
+
+  let qualifier = "";
+  if (dominant === "FB") {
+    qualifier = (pitcher.kPct ?? 0) > 26 || (pitcher.whiffPct ?? 0) > 28 ? "Power" : "Reliant";
+  } else if (dominant === "Breaking") {
+    qualifier = (pitcher.kPct ?? 0) > 24 ? "Specialist" : "Heavy";
+  } else {
+    qualifier = (pitcher.hardHitAllowedPct ?? 50) < 32 ? "Deceptive" : "Heavy";
+  }
+
+  // Append top zone if we have a real zone profile
+  const topZone = pitcher.zoneProfile?.[0];
+  const zoneSuffix = topZone ? ` · ${zoneLabel(topZone.zone)}` : "";
+
+  const color =
+    dominant === "Breaking" ? "bg-violet-500/80 text-white" :
+    dominant === "FB"       ? "bg-blue-500/80 text-white" :
+                              "bg-amber-600/80 text-white";
+
+  return { label: `${pct.toFixed(0)}% ${dominant} ${qualifier}${zoneSuffix}`, color };
+}

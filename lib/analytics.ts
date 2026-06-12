@@ -1,4 +1,110 @@
-import type { DailySnapshot, MLBBatter, MLBPitcher } from "@/types/mlb";
+import type { DailySnapshot, MLBBatter, MLBGame, MLBPitcher } from "@/types/mlb";
+
+export interface PitcherAnalyticsRow {
+  id: number;
+  name: string;
+  hand: "L" | "R";
+  teamAbbreviation: string;
+  isPlayingToday: boolean;
+  opponentAbbreviation?: string;
+  gamePk?: number;
+  last3HitsAllowed: number;
+  last6HitsAllowed: number;
+  last9HitsAllowed: number;
+  avgHitsPerStart: number;
+  seasonERA: number;
+  last3ERA: number;
+  last3HRAllowed: number;
+  seasonHRAllowed: number;
+  starts: number;
+  hardHitAllowedPct?: number;
+  barrelAllowedPct?: number;
+  xBAAgainst?: number;
+  whiffPct?: number;
+  kPct?: number;
+  zonePct?: number;
+  chaseInducePct?: number;
+  fastballPct?: number;
+  breakingPct?: number;
+  offspeedPct?: number;
+}
+
+export function buildPitcherAnalyticsRows(
+  snapshots: DailySnapshot[],
+  today: string
+): PitcherAnalyticsRow[] {
+  // Build today's starter lookup from the most recent snapshot matching today
+  const todayPitcherIds = new Set<number>();
+  const todayGameMap = new Map<number, { opponentAbbreviation: string; gamePk: number }>();
+  const todaySnap = snapshots.find((s) => s.date === today);
+  if (todaySnap) {
+    for (const game of todaySnap.games) {
+      if (game.awayStartingPitcher) {
+        todayPitcherIds.add(game.awayStartingPitcher.id);
+        todayGameMap.set(game.awayStartingPitcher.id, { opponentAbbreviation: game.homeTeam.abbreviation, gamePk: game.gamePk });
+      }
+      if (game.homeStartingPitcher) {
+        todayPitcherIds.add(game.homeStartingPitcher.id);
+        todayGameMap.set(game.homeStartingPitcher.id, { opponentAbbreviation: game.awayTeam.abbreviation, gamePk: game.gamePk });
+      }
+    }
+  }
+
+  const toRow = (p: MLBPitcher, team: string, opp: string, gamePk: number): PitcherAnalyticsRow => {
+    const starts = Math.max(p.last3Starts?.length ?? 0, 1);
+    const isToday = todayPitcherIds.has(p.id);
+    const todayCtx = todayGameMap.get(p.id);
+    return {
+      id: p.id,
+      name: p.name,
+      hand: p.hand,
+      teamAbbreviation: team,
+      isPlayingToday: isToday,
+      opponentAbbreviation: isToday ? (todayCtx?.opponentAbbreviation ?? opp) : undefined,
+      gamePk: isToday ? (todayCtx?.gamePk ?? gamePk) : undefined,
+      last3HitsAllowed: p.last3HitsAllowed,
+      last6HitsAllowed: p.last6HitsAllowed,
+      last9HitsAllowed: p.last9HitsAllowed ?? 0,
+      avgHitsPerStart: parseFloat((p.last3HitsAllowed / starts).toFixed(1)),
+      seasonERA: p.seasonERA,
+      last3ERA: p.last3ERA,
+      last3HRAllowed: p.last3HRAllowed ?? 0,
+      seasonHRAllowed: p.seasonHRAllowed ?? 0,
+      starts,
+      hardHitAllowedPct: p.hardHitAllowedPct,
+      barrelAllowedPct: p.barrelAllowedPct,
+      xBAAgainst: p.xBAAgainst,
+      whiffPct: p.whiffPct,
+      kPct: p.kPct,
+      zonePct: p.zonePct,
+      chaseInducePct: p.chaseInducePct,
+      fastballPct: p.fastballPct,
+      breakingPct: p.breakingPct,
+      offspeedPct: p.offspeedPct,
+    };
+  };
+
+  // Snapshots are newest-first; first occurrence of each pitcher = most recent stats
+  const seen = new Map<number, PitcherAnalyticsRow>();
+  for (const snap of snapshots) {
+    for (const game of snap.games) {
+      const addPitcher = (p: MLBPitcher | undefined, team: string, opp: string) => {
+        if (!p) return;
+        const row = toRow(p, team, opp, game.gamePk);
+        if (!seen.has(p.id)) {
+          seen.set(p.id, row);
+        } else if (row.isPlayingToday && snap.date === today) {
+          // Overwrite with today's data only when processing the today snapshot
+          seen.set(p.id, row);
+        }
+      };
+      addPitcher(game.awayStartingPitcher, game.awayTeam.abbreviation, game.homeTeam.abbreviation);
+      addPitcher(game.homeStartingPitcher, game.homeTeam.abbreviation, game.awayTeam.abbreviation);
+    }
+  }
+
+  return Array.from(seen.values()).sort((a, b) => a.name.localeCompare(b.name));
+}
 
 export interface RankedBatter extends MLBBatter {
   teamAbbreviation: string;

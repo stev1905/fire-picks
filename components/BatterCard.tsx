@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import type { MLBBatter, MLBPitcher } from "@/types/mlb";
 import {
   calcHitScoreBreakdown, calcHRScoreBreakdown,
-  calcPitchMatchup,
+  calcPitchMatchup, calcZoneFit,
   isBouncebackHit, isBouncebackHR,
   scoreBadgeClass, type ScoreBreakdown, type ScoreOptions,
 } from "@/lib/scores";
@@ -156,6 +156,7 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0, scoreOpt
   const matchup      = matchupBadge(batter, opposingPitcher);
   const h2h          = h2hBadge(batter);
   const pitchMatchup = pitchMatchupBadge(batter, opposingPitcher);
+  const zoneFit      = opposingPitcher ? calcZoneFit(batter, opposingPitcher) : null;
   const hasStatcast  = batter.xBA !== undefined || batter.barrelPct !== undefined || batter.hardHitPct !== undefined;
 
   const togglePill = (pill: "HIT" | "HR") =>
@@ -229,6 +230,18 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0, scoreOpt
               {pitchMatchup && (
                 <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${pitchMatchup.color}`}>
                   {pitchMatchup.label}
+                </span>
+              )}
+              {zoneFit && (
+                <span
+                  title={zoneFit.detail}
+                  className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${
+                    zoneFit.favor === "batter"
+                      ? "bg-emerald-500/80 text-white"
+                      : "bg-orange-500/80 text-white"
+                  }`}
+                >
+                  {zoneFit.label}
                 </span>
               )}
             </div>

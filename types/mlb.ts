@@ -20,6 +20,13 @@ export interface MLBTeam {
   logo?: string;
 }
 
+/** One slot in a pitcher's zone frequency profile (top 5 zones by pitch count) */
+export interface PitcherZoneSlot {
+  zone: number;       // 1-9 = strike zone, 11-14 = chase zones
+  pct: number;        // % of all season pitches thrown to this zone
+  xBA: number | null; // avg xBA against when pitcher throws to this zone (null if no contact)
+}
+
 export interface MLBPitcher {
   id: number;
   name: string;
@@ -35,12 +42,21 @@ export interface MLBPitcher {
   teamAbbreviation?: string;
   seasonHRAllowed: number;
   last3HRAllowed: number;
-  // Pitch arsenal (Baseball Savant)
+  last9HitsAllowed: number;
+  // Pitch arsenal (Baseball Savant statcast_search)
   fastballPct?: number;    // % fastballs thrown (FF + SI + FC)
   breakingPct?: number;    // % breaking balls (SL + CU + KC + CS)
   offspeedPct?: number;    // % offspeed (CH + FS)
-  zonePct?: number;        // % pitches thrown in the strike zone
-  chaseInducePct?: number; // opponent o-swing% outside zone
+  zonePct?: number;
+  chaseInducePct?: number;
+  // Pitcher contact stats allowed (derived from statcast_search)
+  hardHitAllowedPct?: number;
+  barrelAllowedPct?: number;
+  xBAAgainst?: number;
+  whiffPct?: number;
+  kPct?: number;
+  // Per-zone pitch location profile (top 5 zones by frequency)
+  zoneProfile?: PitcherZoneSlot[];
 }
 
 export interface PitcherStart {

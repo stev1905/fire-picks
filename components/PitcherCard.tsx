@@ -3,6 +3,7 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { MLBPitcher } from "@/types/mlb";
+import { pitcherSweetSpot } from "@/lib/scores";
 
 interface Props {
   pitcher: MLBPitcher;
@@ -26,17 +27,24 @@ function eraColor(era: number) {
 }
 
 export function PitcherCard({ pitcher, role }: Props) {
+  const sweetSpot = pitcherSweetSpot(pitcher);
+
   return (
     <Card>
       <CardHeader className="pb-2">
         <div className="flex items-center justify-between">
           <div>
             <div className="text-xs text-muted-foreground mb-0.5">{role}</div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <span className="font-semibold">{pitcher.name}</span>
               <Badge variant="outline" className="text-[10px] px-1.5">
                 {pitcher.hand}HP
               </Badge>
+              {sweetSpot && (
+                <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${sweetSpot.color}`}>
+                  {sweetSpot.label}
+                </span>
+              )}
             </div>
           </div>
           <div className={`text-3xl font-bold font-mono ${eraColor(pitcher.seasonERA)}`}>
