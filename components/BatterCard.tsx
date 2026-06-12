@@ -234,14 +234,14 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0, scoreOpt
               )}
               {zoneFit && (
                 <span
-                  title={zoneFit.detail}
-                  className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium shrink-0 ${
+                  className={`flex flex-col px-2 py-1 rounded-lg font-medium shrink-0 ${
                     zoneFit.favor === "batter"
-                      ? "bg-emerald-500/80 text-white"
-                      : "bg-orange-500/80 text-white"
+                      ? "bg-indigo-500/85 text-white"
+                      : "bg-rose-600/85 text-white"
                   }`}
                 >
-                  {zoneFit.label}
+                  <span className="text-[9px] leading-tight">{zoneFit.label}</span>
+                  <span className="text-[8px] leading-tight opacity-80">{zoneFit.detail}</span>
                 </span>
               )}
             </div>

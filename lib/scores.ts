@@ -523,7 +523,10 @@ export function calcZoneFit(
 
   // ── Real zone data path ──────────────────────────────────────────────────────
   if (profile && profile.length > 0) {
-    const top = profile[0]; // pitcher's most-used zone
+    // Prefer the pitcher's top IN-ZONE location (1-9) for a meaningful matchup
+    // signal — chase zones (11-14) are universal across MLB and not differentiating
+    const inZone = profile.filter((z) => z.zone <= 9);
+    const top = inZone.length > 0 ? inZone[0] : profile[0];
     let pitcherEdge = 0;
     let batterEdge  = 0;
     const pitcherNotes: string[] = [];
