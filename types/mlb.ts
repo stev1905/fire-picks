@@ -68,6 +68,13 @@ export interface PitcherStart {
   opponent: string;
 }
 
+/** One zone slot in a batter's zone contact profile (sorted by xBA descending) */
+export interface BatterZoneSlot {
+  zone: number;    // 1-9 = strike zone, 11-14 = chase zones
+  xBA: number;     // batter's avg xBA on contact in this zone
+  pitches: number; // total pitches seen in this zone (season)
+}
+
 export interface MLBBatter {
   id: number;
   name: string;
@@ -112,6 +119,8 @@ export interface MLBBatter {
   baVsFastball?: number;   // batting avg vs fastballs
   baVsBreaking?: number;   // batting avg vs breaking balls
   whiffVsBreaking?: number; // whiff rate vs breaking balls
+  // Per-zone contact profile (sorted by xBA desc — hot zones first)
+  zoneProfile?: BatterZoneSlot[];
   // Career head-to-head vs opposing pitcher
   vsCurrentPitcher?: {
     atBats: number;

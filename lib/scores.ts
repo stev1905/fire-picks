@@ -510,120 +510,50 @@ function isLowZone(z: number) { return (z >= 7 && z <= 9) || z === 13 || z === 1
 function isChaseZone(z: number) { return z >= 11; }
 
 /**
- * Zone Fit — uses the pitcher's actual zone profile (where they throw most often
- * and how effective they are there) against the batter's known tendencies.
+ * Zone Fit — directly overlaps the pitcher's most-targeted in-zone locations
+ * against the batter's personal hot/cold zone map (both from statcast_search data).
  *
- * Returns { favor, label, detail } when a clear edge exists, null otherwise.
+ * Hot zone:  batter xBA > 0.310 in that zone → batter edge when pitcher attacks it
+ * Cold zone: batter xBA < 0.210 in that zone → pitcher edge when they attack there
  */
 export function calcZoneFit(
   batter: MLBBatter,
   pitcher: MLBPitcher
 ): { favor: "pitcher" | "batter"; label: string; detail: string } | null {
-  const profile = pitcher.zoneProfile;
+  const pitcherZones = pitcher.zoneProfile?.filter((z) => z.zone >= 1 && z.zone <= 9);
+  const batterZones  = batter.zoneProfile?.filter((z)  => z.zone >= 1 && z.zone <= 9 && z.pitches >= 5);
 
-  // ── Real zone data path ──────────────────────────────────────────────────────
-  if (profile && profile.length > 0) {
-    // Prefer the pitcher's top IN-ZONE location (1-9) for a meaningful matchup
-    // signal — chase zones (11-14) are universal across MLB and not differentiating
-    const inZone = profile.filter((z) => z.zone <= 9);
-    const top = inZone.length > 0 ? inZone[0] : profile[0];
-    let pitcherEdge = 0;
-    let batterEdge  = 0;
-    const pitcherNotes: string[] = [];
-    const batterNotes:  string[] = [];
-    // Track whether a batter-specific signal fired — without one the badge
-    // would show identically for every batter in the lineup (same pitcher data)
-    let batterSpecific = 0;
+  if (!pitcherZones?.length || !batterZones?.length) return null;
 
-    // Zone xBA: pitcher effectiveness in their top zone (+1 only, not enough to
-    // trigger badge alone — needs a batter-specific signal to accompany it)
-    if (top.xBA !== null) {
-      if (top.xBA < 0.210)   { pitcherEdge++; pitcherNotes.push(`dominates ${zoneLabel(top.zone)} (xBA .${Math.round(top.xBA * 1000)})`); }
-      else if (top.xBA > 0.320) { batterEdge++; batterNotes.push(`pitcher hittable in ${zoneLabel(top.zone)} (.${Math.round(top.xBA * 1000)} xBA)`); }
+  // Pitcher's top 2 in-zone targets (where they live most)
+  const pitcherTargets = pitcherZones.slice(0, 2).map((z) => z.zone);
+
+  // Batter's hot and cold zones from their personal xBA map
+  const hotZones  = batterZones.filter((z) => z.xBA > 0.310).map((z) => z.zone);
+  const coldZones = batterZones.filter((z) => z.xBA < 0.210).map((z) => z.zone);
+
+  const hotMatch  = pitcherTargets.find((z) => hotZones.includes(z));
+  const coldMatch = pitcherTargets.find((z) => coldZones.includes(z));
+
+  if (!hotMatch && !coldMatch) return null;
+
+  // When both overlap, surface the stronger signal
+  if (hotMatch && coldMatch) {
+    const hotXBA  = batterZones.find((z) => z.zone === hotMatch)?.xBA  ?? 0.260;
+    const coldXBA = batterZones.find((z) => z.zone === coldMatch)?.xBA ?? 0.260;
+    if (hotXBA - 0.260 >= 0.260 - coldXBA) {
+      return { favor: "batter",  label: `Zone Fit: ${zoneLabel(hotMatch)} ↑`,  detail: `xBA .${Math.round(hotXBA * 1000)} in hot zone` };
     }
-
-    // Low-zone attacks → batter's breaking ball profile (batter-specific)
-    if (isLowZone(top.zone)) {
-      if (batter.baVsBreaking !== undefined) {
-        batterSpecific++;
-        if (batter.baVsBreaking < 0.215)   { pitcherEdge += 2; pitcherNotes.push(`weak low (.${Math.round(batter.baVsBreaking * 1000)} vs breaking)`); }
-        else if (batter.baVsBreaking > 0.265) { batterEdge += 2; batterNotes.push(`handles low zone (.${Math.round(batter.baVsBreaking * 1000)} vs breaking)`); }
-      }
-      if ((batter.whiffVsBreaking ?? 0) > 35) { batterSpecific++; pitcherEdge++; pitcherNotes.push(`whiffs low (${batter.whiffVsBreaking?.toFixed(0)}%)`); }
-    }
-
-    // Chase-zone attacks → batter's o-swing rate (batter-specific)
-    if (isChaseZone(top.zone)) {
-      if (batter.chasePct !== undefined) {
-        batterSpecific++;
-        if (batter.chasePct > 32)        { pitcherEdge += 2; pitcherNotes.push(`chases (${batter.chasePct.toFixed(0)}%)`); }
-        else if (batter.chasePct < 24)   { batterEdge++;     batterNotes.push(`disciplined eye (${batter.chasePct.toFixed(0)}% chase)`); }
-      }
-    }
-
-    // Pitcher-level modifiers (not batter-specific, just boosts an existing edge)
-    if ((pitcher.whiffPct ?? 0) > 28)           { pitcherEdge++; pitcherNotes.push("high whiff%"); }
-    if ((pitcher.hardHitAllowedPct ?? 50) < 33) { pitcherEdge++; pitcherNotes.push("limits hard contact"); }
-
-    // Hard-contact batter signal (batter-specific)
-    if (batter.hardHitPct !== undefined) {
-      batterSpecific++;
-      if (batter.hardHitPct > 46) { batterEdge++; batterNotes.push(`hard contact (${batter.hardHitPct.toFixed(0)}% HH)`); }
-    }
-
-    // Only surface a badge when a batter-specific data point drove the result
-    if (batterSpecific === 0) return null;
-
-    const label = zoneLabel(top.zone);
-    if (pitcherEdge - batterEdge >= 2) {
-      return { favor: "pitcher", label: `Zone Fit: ${label} ↓`, detail: pitcherNotes[0] ?? "pitcher zone edge" };
-    }
-    if (batterEdge - pitcherEdge >= 2) {
-      return { favor: "batter",  label: `Zone Fit: ${label} ↑`, detail: batterNotes[0]  ?? "batter zone edge" };
-    }
-    return null;
+    return { favor: "pitcher", label: `Zone Fit: ${zoneLabel(coldMatch)} ↓`, detail: `xBA .${Math.round(coldXBA * 1000)} in cold zone` };
   }
 
-  // ── Fallback: pitch-type proxy (no zone profile yet) ─────────────────────────
-  const fbPct  = pitcher.fastballPct  ?? 0;
-  const brPct  = pitcher.breakingPct  ?? 0;
-  const offPct = pitcher.offspeedPct  ?? 0;
-  if (fbPct === 0 && brPct === 0 && offPct === 0) return null;
-
-  const dominant: "FB" | "BR" | "OS" =
-    fbPct >= brPct && fbPct >= offPct ? "FB" : brPct >= offPct ? "BR" : "OS";
-
-  let pe = 0, be = 0;
-  const pn: string[] = [], bn: string[] = [];
-
-  if (dominant === "FB") {
-    if ((pitcher.kPct ?? 0) > 24)               { pe++; pn.push("high K%"); }
-    if ((pitcher.hardHitAllowedPct ?? 50) < 34) { pe++; pn.push("suppresses contact"); }
-    if (batter.baVsFastball !== undefined) {
-      if (batter.baVsFastball >= 0.285)          { be += 2; bn.push(`hits FB .${Math.round(batter.baVsFastball * 1000)}`); }
-      else if (batter.baVsFastball < 0.230)      { pe += 2; pn.push(`weak vs FB`); }
-    }
-    if ((batter.hardHitPct ?? 0) > 45) { be++; bn.push("hard contact"); }
-  } else if (dominant === "BR") {
-    if ((pitcher.whiffPct ?? 0) > 28)  { pe++; pn.push("high whiff%"); }
-    if ((pitcher.kPct ?? 0) > 22)      { pe++; pn.push("high K%"); }
-    if (batter.baVsBreaking !== undefined) {
-      if (batter.baVsBreaking >= 0.260)          { be += 2; bn.push(`handles breaking (.${Math.round(batter.baVsBreaking * 1000)})`); }
-      else if (batter.baVsBreaking < 0.215)      { pe += 2; pn.push(`weak vs breaking`); }
-    }
-    if ((batter.whiffVsBreaking ?? 0) > 35)      { pe++; pn.push("batter whiffs"); }
-    if ((batter.chasePct ?? 0) > 32 && brPct > 35) { pe++; pn.push("batter chases"); }
-  } else {
-    if ((pitcher.hardHitAllowedPct ?? 50) < 32) { pe++; pn.push("limits hard contact"); }
-    if ((pitcher.barrelAllowedPct ?? 10) < 6)   { pe++; pn.push("limits barrels"); }
-    if ((batter.barrelPct ?? 0) > 10)           { be++; bn.push("barrels ball"); }
-    if ((batter.hardHitPct ?? 0) > 48)          { be++; bn.push("hard contact"); }
+  if (hotMatch) {
+    const xBA = batterZones.find((z) => z.zone === hotMatch)?.xBA ?? 0;
+    return { favor: "batter",  label: `Zone Fit: ${zoneLabel(hotMatch)} ↑`,  detail: `xBA .${Math.round(xBA * 1000)} in hot zone` };
   }
 
-  const dl = dominant === "FB" ? "FB" : dominant === "BR" ? "Breaking" : "Offspeed";
-  if (pe - be >= 2) return { favor: "pitcher", label: `Zone Fit: ${dl} ↓`, detail: pn[0] ?? "pitcher edge" };
-  if (be - pe >= 2) return { favor: "batter",  label: `Zone Fit: ${dl} ↑`, detail: bn[0] ?? "batter edge" };
-  return null;
+  const xBA = batterZones.find((z) => z.zone === coldMatch)?.xBA ?? 0;
+  return { favor: "pitcher", label: `Zone Fit: ${zoneLabel(coldMatch!)} ↓`, detail: `xBA .${Math.round(xBA * 1000)} in cold zone` };
 }
 
 /**

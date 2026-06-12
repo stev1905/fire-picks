@@ -6,6 +6,7 @@ import type {
   BatterGameLog,
   PitcherStart,
   PitcherZoneSlot,
+  BatterZoneSlot,
   DailySnapshot,
 } from "@/types/mlb";
 import { getParkFactor } from "./parkFactors";
@@ -256,6 +257,74 @@ export async function fetchPitcherZoneStats(
   } catch {
     return {};
   }
+}
+
+// ─── Batter Zone Profiles (Baseball Savant statcast_search) ───────────────────
+// Batch-fetches all batters in a game in one HTTP request and returns a per-batter
+// map of zone contact profiles (xBA by zone, sorted hot→cold).
+
+export async function fetchBatterZoneProfiles(
+  batterIds: number[],
+  season: number,
+): Promise<Map<number, BatterZoneSlot[]>> {
+  const map = new Map<number, BatterZoneSlot[]>();
+  if (batterIds.length === 0) return map;
+  try {
+    const idParams = batterIds.map((id) => `batters_lookup%5B%5D=${id}`).join("&");
+    const url =
+      `https://baseballsavant.mlb.com/statcast_search/csv?all=true` +
+      `&player_type=batter&${idParams}&year=${season}&type=details`;
+
+    const res = await fetch(url, { cache: "no-store", headers: SAVANT_HEADERS });
+    if (!res.ok) return map;
+
+    const text  = await res.text();
+    const lines = text.trim().split("\n");
+    if (lines.length < 2) return map;
+
+    const header    = splitCSVLine(lines[0]);
+    const batterIdx = header.indexOf("batter");
+    const zoneIdx   = header.indexOf("zone");
+    const xbaIdx    = header.indexOf("estimated_ba_using_speedangle");
+    if (batterIdx < 0 || zoneIdx < 0) return map;
+
+    // Accumulate xBA per (batter, zone)
+    type Acc = { xbaSum: number; contacts: number; total: number };
+    const acc = new Map<string, Acc>();
+
+    for (const line of lines.slice(1)) {
+      if (!line.trim()) continue;
+      const cols     = splitCSVLine(line);
+      const batterId = parseInt(cols[batterIdx] ?? "");
+      const zone     = parseInt(cols[zoneIdx]   ?? "");
+      if (isNaN(batterId) || isNaN(zone) || zone < 1) continue;
+
+      const key   = `${batterId}:${zone}`;
+      const entry = acc.get(key) ?? { xbaSum: 0, contacts: 0, total: 0 };
+      entry.total++;
+      const xba = parseFloat(cols[xbaIdx]?.trim() ?? "");
+      if (!isNaN(xba)) { entry.xbaSum += xba; entry.contacts++; }
+      acc.set(key, entry);
+    }
+
+    // Build per-batter sorted zone profile (min 3 contacts for reliable xBA)
+    const byBatter = new Map<number, BatterZoneSlot[]>();
+    for (const [key, { xbaSum, contacts, total }] of acc.entries()) {
+      if (contacts < 3) continue;
+      const [bidStr, zStr] = key.split(":");
+      const batterId = parseInt(bidStr);
+      const zone     = parseInt(zStr);
+      if (!byBatter.has(batterId)) byBatter.set(batterId, []);
+      byBatter.get(batterId)!.push({ zone, xBA: xbaSum / contacts, pitches: total });
+    }
+
+    for (const [id, slots] of byBatter.entries()) {
+      map.set(id, slots.sort((a, b) => b.xBA - a.xBA));
+    }
+  } catch {
+    // optional — return whatever we have
+  }
+  return map;
 }
 
 // ─── Batter Discipline + Pitch Type Performance (Baseball Savant) ─────────────
@@ -752,12 +821,13 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
       const awayBatterIds = awayLineup.map((p) => p.id);
       const allBatterIds  = [...homeBatterIds, ...awayBatterIds];
 
-      const [batterStatsArr, homePitcherStats, awayPitcherStats, homePitcherZone, awayPitcherZone] = await Promise.all([
+      const [batterStatsArr, batterZoneMap, homePitcherStats, awayPitcherStats, homePitcherZone, awayPitcherZone] = await Promise.all([
         Promise.all(allBatterIds.map((id) => fetchBatterStats(id, season))),
-        homePitcherId ? fetchPitcherStats(homePitcherId, season)    : Promise.resolve({}),
-        awayPitcherId ? fetchPitcherStats(awayPitcherId, season)    : Promise.resolve({}),
-        homePitcherId ? fetchPitcherZoneStats(homePitcherId, season) : Promise.resolve({}),
-        awayPitcherId ? fetchPitcherZoneStats(awayPitcherId, season) : Promise.resolve({}),
+        fetchBatterZoneProfiles(allBatterIds, season),
+        homePitcherId ? fetchPitcherStats(homePitcherId, season)     : Promise.resolve({}),
+        awayPitcherId ? fetchPitcherStats(awayPitcherId, season)     : Promise.resolve({}),
+        homePitcherId ? fetchPitcherZoneStats(homePitcherId, season)  : Promise.resolve({}),
+        awayPitcherId ? fetchPitcherZoneStats(awayPitcherId, season)  : Promise.resolve({}),
       ]);
 
       const batterStatsMap: Record<number, Partial<MLBBatter>> = {};
@@ -802,6 +872,7 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
         slgVsLeft: 0, slgVsRight: 0,
         last10Games: [],
         ...batterStatsMap[p.id],
+        zoneProfile: batterZoneMap.get(p.id),
       });
 
       const buildPitcher = (
