@@ -531,30 +531,48 @@ export function calcZoneFit(
     let batterEdge  = 0;
     const pitcherNotes: string[] = [];
     const batterNotes:  string[] = [];
+    // Track whether a batter-specific signal fired — without one the badge
+    // would show identically for every batter in the lineup (same pitcher data)
+    let batterSpecific = 0;
 
-    // Zone xBA: how well batters have hit the pitcher in their favourite zone
+    // Zone xBA: pitcher effectiveness in their top zone (+1 only, not enough to
+    // trigger badge alone — needs a batter-specific signal to accompany it)
     if (top.xBA !== null) {
-      if (top.xBA < 0.210)       { pitcherEdge += 2; pitcherNotes.push(`xBA .${Math.round(top.xBA * 1000)} in ${zoneLabel(top.zone)}`); }
-      else if (top.xBA > 0.320)  { batterEdge  += 2; batterNotes.push(`batters rake in ${zoneLabel(top.zone)} (.${Math.round(top.xBA * 1000)} xBA)`); }
+      if (top.xBA < 0.210)   { pitcherEdge++; pitcherNotes.push(`dominates ${zoneLabel(top.zone)} (xBA .${Math.round(top.xBA * 1000)})`); }
+      else if (top.xBA > 0.320) { batterEdge++; batterNotes.push(`pitcher hittable in ${zoneLabel(top.zone)} (.${Math.round(top.xBA * 1000)} xBA)`); }
     }
 
-    // Low-zone attacks → cross-ref batter's breaking ball profile
+    // Low-zone attacks → batter's breaking ball profile (batter-specific)
     if (isLowZone(top.zone)) {
-      if ((batter.baVsBreaking ?? 0.240) < 0.215)     { pitcherEdge++; pitcherNotes.push("batter weak low"); }
-      else if ((batter.baVsBreaking ?? 0) > 0.265)     { batterEdge++;  batterNotes.push("batter handles low zone"); }
-      if ((batter.whiffVsBreaking ?? 0) > 35)          { pitcherEdge++; pitcherNotes.push(`batter whiffs low (${batter.whiffVsBreaking?.toFixed(0)}%)`); }
+      if (batter.baVsBreaking !== undefined) {
+        batterSpecific++;
+        if (batter.baVsBreaking < 0.215)   { pitcherEdge += 2; pitcherNotes.push(`weak low (.${Math.round(batter.baVsBreaking * 1000)} vs breaking)`); }
+        else if (batter.baVsBreaking > 0.265) { batterEdge += 2; batterNotes.push(`handles low zone (.${Math.round(batter.baVsBreaking * 1000)} vs breaking)`); }
+      }
+      if ((batter.whiffVsBreaking ?? 0) > 35) { batterSpecific++; pitcherEdge++; pitcherNotes.push(`whiffs low (${batter.whiffVsBreaking?.toFixed(0)}%)`); }
     }
 
-    // Chase-zone attacks → batter's o-swing tendency
+    // Chase-zone attacks → batter's o-swing rate (batter-specific)
     if (isChaseZone(top.zone)) {
-      if ((batter.chasePct ?? 0) > 32)   { pitcherEdge += 2; pitcherNotes.push(`batter chases (${batter.chasePct?.toFixed(0)}%)`); }
-      else if ((batter.chasePct ?? 100) < 24) { batterEdge++; batterNotes.push("disciplined eye"); }
+      if (batter.chasePct !== undefined) {
+        batterSpecific++;
+        if (batter.chasePct > 32)        { pitcherEdge += 2; pitcherNotes.push(`chases (${batter.chasePct.toFixed(0)}%)`); }
+        else if (batter.chasePct < 24)   { batterEdge++;     batterNotes.push(`disciplined eye (${batter.chasePct.toFixed(0)}% chase)`); }
+      }
     }
 
-    // Overall pitcher effectiveness modifiers
-    if ((pitcher.whiffPct ?? 0) > 28)              { pitcherEdge++; pitcherNotes.push("high whiff%"); }
-    if ((pitcher.hardHitAllowedPct ?? 50) < 33)    { pitcherEdge++; pitcherNotes.push("limits hard contact"); }
-    if ((batter.hardHitPct ?? 0) > 46)             { batterEdge++;  batterNotes.push("batter hits it hard"); }
+    // Pitcher-level modifiers (not batter-specific, just boosts an existing edge)
+    if ((pitcher.whiffPct ?? 0) > 28)           { pitcherEdge++; pitcherNotes.push("high whiff%"); }
+    if ((pitcher.hardHitAllowedPct ?? 50) < 33) { pitcherEdge++; pitcherNotes.push("limits hard contact"); }
+
+    // Hard-contact batter signal (batter-specific)
+    if (batter.hardHitPct !== undefined) {
+      batterSpecific++;
+      if (batter.hardHitPct > 46) { batterEdge++; batterNotes.push(`hard contact (${batter.hardHitPct.toFixed(0)}% HH)`); }
+    }
+
+    // Only surface a badge when a batter-specific data point drove the result
+    if (batterSpecific === 0) return null;
 
     const label = zoneLabel(top.zone);
     if (pitcherEdge - batterEdge >= 2) {
