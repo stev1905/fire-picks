@@ -8,6 +8,6 @@
 [[plugins]]
   package = "@netlify/plugin-nextjs"
 
-# Retrain scoring model on the 1st of each month at 4 AM ET (08:00 UTC)
+# Retrain scoring model every 10 days (1st, 11th, 21st) at 4 AM ET (08:00 UTC)
 [functions."recalibrate-model-background"]
-  schedule = "0 8 1 * *"
+  schedule = "0 8 */10 * *"
