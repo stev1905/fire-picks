@@ -7,7 +7,7 @@ import type { MLBBatter, MLBPitcher } from "@/types/mlb";
 import {
   calcHitScoreBreakdown, calcHRScoreBreakdown,
   calcPitchMatchup, calcZoneFit,
-  isBouncebackHit, isBouncebackHR,
+  isBouncebackHit, isBouncebackHR, getColdStreak,
   scoreBadgeClass, type ScoreBreakdown, type ScoreOptions,
 } from "@/lib/scores";
 import {
@@ -153,6 +153,7 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0, scoreOpt
   const hrBreakdown  = calcHRScoreBreakdown(batter, opposingPitcher, parkFactor, scoreOpts);
   const bounceHit    = isBouncebackHit(batter, hitBreakdown.total);
   const bounceHR     = isBouncebackHR(batter, hrBreakdown.total);
+  const coldStreak   = getColdStreak(batter);
   const matchup      = matchupBadge(batter, opposingPitcher);
   const h2h          = h2hBadge(batter);
   const pitchMatchup = pitchMatchupBadge(batter, opposingPitcher);
@@ -187,27 +188,37 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0, scoreOpt
             <Badge variant="outline" className="text-[9px] px-1 py-0 h-4">{batter.position}</Badge>
           </div>
 
-          {/* Streak + hit rate + bounce-back flags */}
-          <div className="flex flex-wrap gap-x-2 gap-y-0.5 mt-0.5">
+          {/* Streak + hit rate + momentum chips */}
+          <div className="flex flex-wrap gap-1 mt-0.5">
             {batter.hittingStreak > 0 && (
-              <span className="text-[10px] text-amber-500 dark:text-amber-400">
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-amber-500/15 text-amber-700 dark:text-amber-300 font-medium">
                 🔥 {batter.hittingStreak}-game streak
               </span>
             )}
             {hasLast10 && (
-              <span className={`text-[10px] ${hitLabel.color}`}>
+              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                hitsIn10 <= 2 ? "bg-red-500/15 text-red-700 dark:text-red-400" :
+                hitsIn10 <= 4 ? "bg-orange-500/15 text-orange-700 dark:text-orange-400" :
+                hitsIn10 >= 8 ? "bg-green-500/15 text-green-700 dark:text-green-400" :
+                "bg-muted text-muted-foreground"
+              }`}>
                 {hitLabel.icon && <span className="mr-0.5">{hitLabel.icon}</span>}
                 {hitsIn10}/{batter.last10Games.length} w/hit
               </span>
             )}
+            {coldStreak >= 3 && !bounceHit && (
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-700 dark:text-sky-300 font-medium">
+                🧊 {coldStreak}-game cold streak
+              </span>
+            )}
             {bounceHit && (
-              <span className="text-[10px] font-semibold text-purple-600 dark:text-purple-400">
-                🔄 Due for hit
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-purple-600/85 text-white font-semibold">
+                ↑ Bounce-back hit
               </span>
             )}
             {bounceHR && (
-              <span className="text-[10px] font-semibold text-blue-600 dark:text-blue-400">
-                💫 Due for HR
+              <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-600/85 text-white font-semibold">
+                ↑ Bounce-back HR
               </span>
             )}
           </div>

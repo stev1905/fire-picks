@@ -318,10 +318,54 @@ export function calcHitScoreBreakdown(
     components.push({ label: "Pitch Matchup", earned: pm.earned, max: pm.max, value: pm.value });
   }
 
+  // 12. Momentum — bounce-back bonus (hitless exactly yesterday, quality hitter)
+  //     or cold streak penalty (2+ consecutive hitless games).
+  //     Data: coldStreak=1 + score ≥60 shows +7.7pp lift; coldStreak ≥5 shows -16pp drag.
+  const coldStreak = getColdStreak(batter);
+  let momentumMod = 0;
+  if (coldStreak === 1) {
+    const rate = batter.hitRate20 ?? batter.hitRate10 ??
+      (batter.last10Games.length > 0
+        ? batter.last10Games.filter(g => g.hits > 0).length / batter.last10Games.length
+        : 0);
+    if (rate >= 0.65)      { momentumMod = 3; }
+    else if (rate >= 0.50) { momentumMod = 2; }
+    else if (rate >= 0.40) { momentumMod = 1; }
+    if (momentumMod > 0) {
+      components.push({
+        label: "Bounce-back",
+        earned: momentumMod,
+        max: 3,
+        value: `hitless yday, rate ${Math.round(rate * 100)}% (+${momentumMod} pts)`,
+      });
+    }
+  } else if (coldStreak >= 2) {
+    momentumMod = coldStreak >= 7 ? -5 : coldStreak >= 5 ? -4 : coldStreak >= 3 ? -2 : -1;
+    components.push({
+      label: "Cold Streak",
+      earned: momentumMod,
+      max: 0,
+      value: `${coldStreak} hitless games (${momentumMod} pts)`,
+    });
+  }
+
+  // 13. Lineup slot modifier — bottom-order batters get fewer ABs/game so lower hit probability.
+  //     Data: slots 7-9 underperform same-score-band top order by 4–9pp.
+  const slot = batter.battingOrder ?? 0;
+  const slotMod = slot >= 9 ? -3 : slot >= 7 ? -2 : 0;
+  if (slotMod < 0) {
+    components.push({
+      label: `Lineup Slot (${slot})`,
+      earned: slotMod,
+      max: 0,
+      value: `Slot ${slot} — fewer ABs/game (${slotMod} pts)`,
+    });
+  }
+
   const total = Math.min(100, Math.max(0, Math.round(
     form + consistencyScore + matchup + homeAwayScore + streakScore + park + pitcherScore +
     (opts.weather && opts.cfBearing !== undefined ? components.find(c => c.label === "Wind & Weather")!.earned : 0) +
-    xBAScore + hardHitScore + h2hScore + pitchMatchupScore
+    xBAScore + hardHitScore + h2hScore + pitchMatchupScore + momentumMod + slotMod
   )));
 
   return { total, components };
@@ -520,9 +564,21 @@ export function calcHRScoreBreakdown(
       : "—",
   });
 
+  // 12. Lineup slot modifier — same AB-opportunity logic as hit score.
+  const hrSlot = batter.battingOrder ?? 0;
+  const hrSlotMod = hrSlot >= 9 ? -3 : hrSlot >= 7 ? -2 : 0;
+  if (hrSlotMod < 0) {
+    components.push({
+      label: `Lineup Slot (${hrSlot})`,
+      earned: hrSlotMod,
+      max: 0,
+      value: `Slot ${hrSlot} — fewer ABs/game (${hrSlotMod} pts)`,
+    });
+  }
+
   const total = Math.min(100, Math.max(0, Math.round(
     recentHR + slg + matchup + park + pullScore + wxScore +
-    recentSlg + barrelScore + hardHitHRScore + pitcherHRScore + h2hScore
+    recentSlg + barrelScore + hardHitHRScore + pitcherHRScore + h2hScore + hrSlotMod
   )));
 
   return { total, components };
@@ -544,12 +600,26 @@ export function scoreBadgeClass(score: number) {
   return "bg-red-500/15 text-red-700 dark:text-red-300 border border-red-500/30";
 }
 
-/** True if the batter is likely due for a hit: hitless last game but trending well overall */
+/** Count consecutive hitless games entering today (cold streak length) */
+export function getColdStreak(batter: MLBBatter): number {
+  let n = 0;
+  for (const g of batter.last10Games) {
+    if ((g.hits ?? 0) === 0) n++;
+    else break;
+  }
+  return n;
+}
+
+/**
+ * True if the batter is a bounce-back candidate: hitless exactly yesterday
+ * (not a multi-day cold streak), trending well, and score high enough to be meaningful.
+ * Data shows +3–8pp lift for quality hitters in this situation.
+ */
 export function isBouncebackHit(batter: MLBBatter, hitScore: number): boolean {
   if (hitScore < 50) return false;
-  const last = batter.last10Games[0];
-  if (!last || last.hits > 0) return false; // had a hit last game
-  return batter.last6AVG >= 0.260 || batter.last10AVG >= 0.250;
+  if (getColdStreak(batter) !== 1) return false; // must be hitless EXACTLY yesterday
+  const rate = batter.hitRate20 ?? batter.hitRate10 ?? 0;
+  return rate >= 0.50 || batter.last10AVG >= 0.250;
 }
 
 /** True if the batter is due for a HR: no HR last game but has been hitting HRs recently */

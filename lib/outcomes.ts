@@ -36,6 +36,14 @@ function buildPreGameFeatures(batter: MLBBatter, pitcher: MLBPitcher | undefined
     else break;
   }
 
+  // Consecutive hitless games entering today (cold streak)
+  let coldStreak = 0;
+  for (const g of prior) {
+    if ((g.hits ?? 0) === 0) coldStreak++;
+    else break;
+  }
+  const hitlessYesterday = prior.length > 0 ? (prior[0].hits ?? 0) === 0 : null;
+
   const pitcherHand = pitcher?.hand ?? null;
   const rawVsHand   = pitcherHand === "L" ? batter.avgVsLeft : batter.avgVsRight;
   const avgVsHand   = (rawVsHand && rawVsHand > 0) ? rawVsHand : (batter.seasonAVG ?? null);
@@ -55,6 +63,9 @@ function buildPreGameFeatures(batter: MLBBatter, pitcher: MLBPitcher | undefined
     avgVsHand,
     situationalAVG,
     hittingStreak,
+    coldStreak,
+    hitlessYesterday,
+    battingOrder: batter.battingOrder ?? null,
     xBA:         batter.xBA         ?? null,
     hardHitPct:  batter.hardHitPct  ?? null,
     barrelPct:   batter.barrelPct   ?? null,
