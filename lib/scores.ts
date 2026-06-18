@@ -1,5 +1,6 @@
 import type { MLBBatter, MLBPitcher } from "@/types/mlb";
 import type { WeatherData } from "@/lib/weather";
+import { HIT_WEIGHTS, HR_WEIGHTS } from "@/lib/model-weights";
 
 export interface ScoreComponent {
   label: string;
@@ -114,16 +115,17 @@ export function calcPitchMatchup(
 /**
  * Hit Score (0–100)
  *
- *  22 — Recent AVG form: last3AVG + last10AVG
- *  11 — Hit consistency: games with a hit / last 10
- *  19 — Matchup AVG vs pitcher hand
- *   7 — Hitting streak
- *   6 — Park factor
- *   7 — Pitcher H allowed (L3 starts)
- *   8 — Weather (wind direction + temperature)
- *  10 — xBA (Statcast)
- *   5 — Hard Hit %
- *   5 — Career H2H vs opposing pitcher
+ *  20 — Recent AVG form: last3AVG + last10AVG      (HIT_WEIGHTS.form)
+ *  18 — Hit consistency: hitRate20 (or hitRate10)  (HIT_WEIGHTS.consistency)
+ *  16 — Matchup AVG vs pitcher hand                (HIT_WEIGHTS.vsHand)
+ *   7 — Home / Away situational AVG                (HIT_WEIGHTS.homeAway)
+ *   5 — Hitting streak (logarithmic, ≥5 significant) (HIT_WEIGHTS.streak)
+ *   9 — xBA (Statcast)                             (HIT_WEIGHTS.xBA)
+ *   3 — Hard Hit %                                 (HIT_WEIGHTS.hardHit)
+ *   4 — Pitcher H allowed (L3 starts)              (HIT_WEIGHTS.pitcherH)
+ *   3 — Career H2H vs opposing pitcher             (HIT_WEIGHTS.h2h)
+ *   ~8 — Weather (wind direction + temperature)    [modifier, not in base sum]
+ *   ~8 — Pitch matchup                             [modifier, not in base sum]
  */
 export function calcHitScoreBreakdown(
   batter: MLBBatter,
@@ -133,55 +135,72 @@ export function calcHitScoreBreakdown(
 ): ScoreBreakdown {
   const components: ScoreComponent[] = [];
 
-  // 1. Recent AVG form (0–22)
-  const formRaw = (batter.last10AVG / 0.380) * 14 + (batter.last3AVG / 0.480) * 8;
-  const form = clamp(formRaw, 22);
+  // 1. Recent AVG form (0–HIT_WEIGHTS.form)
+  const W_FORM = HIT_WEIGHTS.form; // 20
+  const formRaw = (batter.last10AVG / 0.380) * (W_FORM * 0.65) + (batter.last3AVG / 0.480) * (W_FORM * 0.35);
+  const form = clamp(formRaw, W_FORM);
   components.push({
     label: "Recent AVG (L3/L10)",
     earned: Math.round(form),
-    max: 22,
+    max: W_FORM,
     value: `${fmt(batter.last3AVG)} / ${fmt(batter.last10AVG)}`,
   });
 
-  // 2. Hit consistency (0–9)
-  const gp = batter.last10Games.length;
-  const hitsIn10 = gp > 0 ? batter.last10Games.filter((g) => g.hits > 0).length : 0;
-  const consistency = gp > 0 ? (hitsIn10 / gp) * 9 : 0;
+  // 2. Hit consistency — prefer hitRate20 (3× more predictive than hitRate10)
+  //    Falls back to hitRate10 (from last10Games) when hitRate20 not available.
+  const W_CONS = HIT_WEIGHTS.consistency; // 18
+  let consistencyLabel: string;
+  let consistencyScore: number;
+  if (batter.hitRate20 !== undefined && batter.hitRate20 > 0) {
+    consistencyScore = clamp(batter.hitRate20 * W_CONS, W_CONS);
+    const gamesWithHit = Math.round(batter.hitRate20 * 20);
+    consistencyLabel = `${gamesWithHit}/20 games (L20)`;
+  } else {
+    const gp = batter.last10Games.length;
+    const hitsIn10 = gp > 0 ? batter.last10Games.filter((g) => g.hits > 0).length : 0;
+    consistencyScore = gp > 0 ? clamp((hitsIn10 / gp) * W_CONS, W_CONS) : 0;
+    consistencyLabel = `${hitsIn10}/${gp} games (L10)`;
+  }
   components.push({
-    label: "Hit Rate (last 10)",
-    earned: Math.round(consistency),
-    max: 9,
-    value: `${hitsIn10}/${gp} games`,
+    label: "Hit Consistency",
+    earned: Math.round(consistencyScore),
+    max: W_CONS,
+    value: consistencyLabel,
   });
 
-  // 3. Matchup vs pitcher hand (0–15)
+  // 3. Matchup vs pitcher hand (0–HIT_WEIGHTS.vsHand)
+  //    Bug fix: when avgVsHand is 0/null, fall back to seasonAVG instead of scoring 0.
+  const W_VSHAND = HIT_WEIGHTS.vsHand; // 16
   let matchup: number;
   if (pitcher) {
-    const matchupAvg = pitcher.hand === "L" ? batter.avgVsLeft : batter.avgVsRight;
-    matchup = clamp((matchupAvg / 0.360) * 15, 15);
+    const rawMatchupAvg = pitcher.hand === "L" ? batter.avgVsLeft : batter.avgVsRight;
+    // Use seasonAVG as fallback when split is 0 (missing data, not actually .000)
+    const matchupAvg = rawMatchupAvg > 0 ? rawMatchupAvg : batter.seasonAVG;
+    matchup = clamp((matchupAvg / 0.360) * W_VSHAND, W_VSHAND);
     components.push({
       label: `AVG vs ${pitcher.hand === "L" ? "LHP" : "RHP"}`,
       earned: Math.round(matchup),
-      max: 15,
-      value: fmt(matchupAvg),
+      max: W_VSHAND,
+      value: rawMatchupAvg > 0 ? fmt(rawMatchupAvg) : `${fmt(batter.seasonAVG)} (season, no split)`,
     });
   } else {
-    matchup = clamp((batter.seasonAVG / 0.340) * 10, 10);
+    matchup = clamp((batter.seasonAVG / 0.340) * (W_VSHAND * 0.7), W_VSHAND);
     components.push({
       label: "Season AVG (no SP)",
       earned: Math.round(matchup),
-      max: 10,
+      max: W_VSHAND,
       value: fmt(batter.seasonAVG),
     });
   }
 
-  // 3b. Home / Away split (0–7)
+  // 3b. Home / Away split (0–HIT_WEIGHTS.homeAway)
+  const W_HA = HIT_WEIGHTS.homeAway; // 7
   let homeAwayScore = 0;
   const hasHomeSplit = batter.homeAVG !== undefined && batter.awayAVG !== undefined
     && (batter.homeAVG > 0 || batter.awayAVG > 0);
   if (hasHomeSplit && batter.isHome !== undefined) {
     const situationalAvg = batter.isHome ? batter.homeAVG! : batter.awayAVG!;
-    homeAwayScore = clamp((situationalAvg / 0.340) * 7, 7);
+    homeAwayScore = clamp((situationalAvg / 0.340) * W_HA, W_HA);
     const diff = (batter.homeAVG! - batter.awayAVG!) * 1000;
     const splitNote = Math.abs(diff) >= 25
       ? ` (${diff > 0 ? "+" : ""}${diff.toFixed(0)} H/A split)`
@@ -189,22 +208,28 @@ export function calcHitScoreBreakdown(
     components.push({
       label: batter.isHome ? "Home AVG" : "Road AVG",
       earned: Math.round(homeAwayScore),
-      max: 7,
+      max: W_HA,
       value: `${fmt(situationalAvg)}${splitNote}`,
     });
   }
 
-  // 4. Hitting streak (0–7)
-  const streak = clamp(batter.hittingStreak * 0.85, 7);
+  // 4. Hitting streak — logarithmic curve: significant points only for streaks ≥ 5
+  //    log(1+streak)/log(1+maxStreak) × maxPts gives convex shape:
+  //      streak=1 → ~1.2 pts, streak=3 → ~2.3, streak=5 → ~3.1, streak=8 → ~4.1, streak=12 → ~5
+  const W_STREAK = HIT_WEIGHTS.streak; // 5
+  const maxStreakRef = 15; // reference for log normalization
+  const streakScore = batter.hittingStreak > 0
+    ? clamp((Math.log(1 + batter.hittingStreak) / Math.log(1 + maxStreakRef)) * W_STREAK, W_STREAK)
+    : 0;
   components.push({
     label: "Hit Streak",
-    earned: Math.round(streak),
-    max: 7,
+    earned: Math.round(streakScore),
+    max: W_STREAK,
     value: batter.hittingStreak > 0 ? `${batter.hittingStreak} games` : "—",
   });
 
-  // 5. Park factor (0–6)
-  const park = clamp(((parkFactor - 0.88) / (1.24 - 0.88)) * 6, 6);
+  // 5. Park factor (0–4, reduced from prior 6 — near-zero correlation in data)
+  const park = clamp(((parkFactor - 0.88) / (1.24 - 0.88)) * 4, 4);
   const parkTier =
     parkFactor >= 1.10 ? "Very Hitter Friendly" :
     parkFactor >= 1.04 ? "Hitter Friendly" :
@@ -213,15 +238,16 @@ export function calcHitScoreBreakdown(
   components.push({
     label: "Park Factor",
     earned: Math.round(park),
-    max: 6,
+    max: 4,
     value: `${parkTier} (${parkFactor.toFixed(2)})`,
   });
 
-  // 6. Pitcher H allowed (0–7)
+  // 6. Pitcher H allowed (0–HIT_WEIGHTS.pitcherH)
+  const W_PITCHER_H = HIT_WEIGHTS.pitcherH; // 4
   let pitcherScore = 0;
   if (pitcher) {
     const softness = Math.max(0, (pitcher.last3HitsAllowed - 4) / 11);
-    pitcherScore = clamp(softness * 7, 7);
+    pitcherScore = clamp(softness * W_PITCHER_H, W_PITCHER_H);
     const pitcherTier =
       pitcher.last3HitsAllowed >= 12 ? "very hittable" :
       pitcher.last3HitsAllowed >= 8  ? "above avg" :
@@ -229,7 +255,7 @@ export function calcHitScoreBreakdown(
     components.push({
       label: "Pitcher H Allowed (L3 starts)",
       earned: Math.round(pitcherScore),
-      max: 7,
+      max: W_PITCHER_H,
       value: `${pitcher.last3HitsAllowed} hits — ${pitcherTier}`,
     });
   }
@@ -240,40 +266,43 @@ export function calcHitScoreBreakdown(
     components.push({ label: "Wind & Weather", earned: wx, max: 8, value: wxLabel });
   }
 
-  // 8. xBA (0–10)
+  // 8. xBA (0–HIT_WEIGHTS.xBA)
+  const W_XBA = HIT_WEIGHTS.xBA; // 9
   let xBAScore = 0;
   if (batter.xBA !== undefined && batter.xBA > 0) {
-    xBAScore = clamp((batter.xBA / 0.340) * 10, 10);
+    xBAScore = clamp((batter.xBA / 0.340) * W_XBA, W_XBA);
   }
   components.push({
     label: "xBA (Statcast)",
     earned: Math.round(xBAScore),
-    max: 10,
+    max: W_XBA,
     value: batter.xBA !== undefined ? fmt(batter.xBA) : "—",
   });
 
-  // 9. Hard Hit % (0–4)
+  // 9. Hard Hit % (0–HIT_WEIGHTS.hardHit)
+  const W_HH = HIT_WEIGHTS.hardHit; // 3
   let hardHitScore = 0;
   if (batter.hardHitPct !== undefined && batter.hardHitPct > 0) {
-    hardHitScore = clamp((batter.hardHitPct / 55) * 4, 4);
+    hardHitScore = clamp((batter.hardHitPct / 55) * W_HH, W_HH);
   }
   components.push({
     label: "Hard Hit %",
     earned: Math.round(hardHitScore),
-    max: 4,
+    max: W_HH,
     value: batter.hardHitPct !== undefined ? `${batter.hardHitPct.toFixed(1)}%` : "—",
   });
 
-  // 10. H2H vs current pitcher (0–5, min 5 AB)
+  // 10. H2H vs current pitcher (0–HIT_WEIGHTS.h2h, min 5 AB)
+  const W_H2H = HIT_WEIGHTS.h2h; // 3
   let h2hScore = 0;
   const h2h = batter.vsCurrentPitcher;
   if (h2h && h2h.atBats >= 5) {
-    h2hScore = clamp((h2h.avg / 0.300) * 5, 5);
+    h2hScore = clamp((h2h.avg / 0.300) * W_H2H, W_H2H);
   }
   components.push({
     label: "vs This Pitcher (career)",
     earned: Math.round(h2hScore),
-    max: 5,
+    max: W_H2H,
     value: h2h && h2h.atBats >= 5
       ? `${fmt(h2h.avg)} (${h2h.hits}/${h2h.atBats} AB)`
       : h2h && h2h.atBats > 0
@@ -290,7 +319,7 @@ export function calcHitScoreBreakdown(
   }
 
   const total = Math.min(100, Math.max(0, Math.round(
-    form + consistency + matchup + homeAwayScore + streak + park + pitcherScore +
+    form + consistencyScore + matchup + homeAwayScore + streakScore + park + pitcherScore +
     (opts.weather && opts.cfBearing !== undefined ? components.find(c => c.label === "Wind & Weather")!.earned : 0) +
     xBAScore + hardHitScore + h2hScore + pitchMatchupScore
   )));
@@ -301,16 +330,16 @@ export function calcHitScoreBreakdown(
 /**
  * HR Score (0–100)
  *
- *  20 — Recent HR activity
- *  15 — Season SLG
- *  13 — Matchup SLG vs pitcher hand
- *   8 — Park factor (general)
- *   7 — Pull-side field distance (based on batter hand)
- *   8 — Weather (wind direction + temperature)
- *   7 — Recent SLG last 10
- *  10 — Barrel %
- *   8 — Pitcher HR allowed (season rate)
- *   4 — Career H2H HR rate vs pitcher
+ *  22 — Recent HR activity (L3/L6/L10)            (HR_WEIGHTS.recentHR)
+ *  12 — Season SLG                                 (HR_WEIGHTS.seasonSLG)
+ *  11 — Matchup SLG vs pitcher hand                (HR_WEIGHTS.slgVsHand)
+ *  10 — Recent SLG last 10                         (HR_WEIGHTS.recentSLG)
+ *  12 — Barrel %                                   (HR_WEIGHTS.barrel)
+ *   8 — Hard Hit %                                 (HR_WEIGHTS.hardHit)
+ *   7 — Pitcher HR allowed                         (HR_WEIGHTS.pitcherHR)
+ *   3 — Park factor                                (HR_WEIGHTS.park)
+ *   ~7 — Pull-side field distance                  [modifier]
+ *   ~8 — Weather (wind toward pull side + temp)    [modifier]
  */
 export function calcHRScoreBreakdown(
   batter: MLBBatter,
@@ -320,50 +349,55 @@ export function calcHRScoreBreakdown(
 ): ScoreBreakdown {
   const components: ScoreComponent[] = [];
 
-  // 1. Recent HR activity (0–20)
+  // 1. Recent HR activity (0–HR_WEIGHTS.recentHR)
+  //    last3HR dominates (r=0.557), last6HR (r=0.404), last10HR (r=0.058)
+  const W_RECENT_HR = HR_WEIGHTS.recentHR; // 22
   const recentHR =
-    clamp(((batter.last10HR ?? 0) / 4) * 10, 10) +
-    clamp(((batter.last6HR  ?? 0) / 3) * 6,   6) +
-    clamp(((batter.last3HR  ?? 0) / 2) * 4,   4);
+    clamp(((batter.last3HR  ?? 0) / 2) * (W_RECENT_HR * 0.50), W_RECENT_HR * 0.50) +
+    clamp(((batter.last6HR  ?? 0) / 3) * (W_RECENT_HR * 0.35), W_RECENT_HR * 0.35) +
+    clamp(((batter.last10HR ?? 0) / 4) * (W_RECENT_HR * 0.15), W_RECENT_HR * 0.15);
   components.push({
     label: "Recent HRs (L3/L6/L10)",
     earned: Math.round(recentHR),
-    max: 20,
+    max: W_RECENT_HR,
     value: `${batter.last3HR} / ${batter.last6HR} / ${batter.last10HR}`,
   });
 
-  // 2. Season SLG (0–15)
-  const slg = clamp((batter.seasonSLG / 0.620) * 15, 15);
+  // 2. Season SLG (0–HR_WEIGHTS.seasonSLG)
+  const W_SLG = HR_WEIGHTS.seasonSLG; // 12
+  const slg = clamp((batter.seasonSLG / 0.620) * W_SLG, W_SLG);
   components.push({
     label: "Season SLG",
     earned: Math.round(slg),
-    max: 15,
+    max: W_SLG,
     value: fmt(batter.seasonSLG),
   });
 
-  // 3. Matchup SLG vs pitcher hand (0–13)
+  // 3. Matchup SLG vs pitcher hand (0–HR_WEIGHTS.slgVsHand)
+  const W_SLG_HAND = HR_WEIGHTS.slgVsHand; // 11
   let matchup: number;
   if (pitcher) {
     const matchupSLG = pitcher.hand === "L" ? batter.slgVsLeft : batter.slgVsRight;
-    matchup = clamp((matchupSLG / 0.680) * 13, 13);
+    matchup = clamp((matchupSLG / 0.680) * W_SLG_HAND, W_SLG_HAND);
     components.push({
       label: `SLG vs ${pitcher.hand === "L" ? "LHP" : "RHP"}`,
       earned: Math.round(matchup),
-      max: 13,
+      max: W_SLG_HAND,
       value: fmt(matchupSLG),
     });
   } else {
-    matchup = clamp((batter.seasonSLG / 0.600) * 8, 8);
+    matchup = clamp((batter.seasonSLG / 0.600) * (W_SLG_HAND * 0.7), W_SLG_HAND);
     components.push({
       label: "Season SLG (no SP)",
       earned: Math.round(matchup),
-      max: 8,
+      max: W_SLG_HAND,
       value: fmt(batter.seasonSLG),
     });
   }
 
-  // 4. Park factor — general (0–8)
-  const park = clamp(((parkFactor - 0.88) / (1.24 - 0.88)) * 8, 8);
+  // 4. Park factor — general (0–HR_WEIGHTS.park)
+  const W_PARK_HR = HR_WEIGHTS.park; // 3
+  const park = clamp(((parkFactor - 0.88) / (1.24 - 0.88)) * W_PARK_HR, W_PARK_HR);
   const parkTierHR =
     parkFactor >= 1.10 ? "Very Hitter Friendly" :
     parkFactor >= 1.04 ? "Hitter Friendly" :
@@ -372,7 +406,7 @@ export function calcHRScoreBreakdown(
   components.push({
     label: "Park Factor",
     earned: Math.round(park),
-    max: 8,
+    max: W_PARK_HR,
     value: `${parkTierHR} (${parkFactor.toFixed(2)})`,
   });
 
@@ -410,28 +444,44 @@ export function calcHRScoreBreakdown(
     components.push({ label: "Wind & Weather", earned: wx, max: 8, value: wxLabel });
   }
 
-  // 7. Recent SLG last 10 (0–7)
-  const recentSlg = clamp((batter.last10SLG / 0.700) * 7, 7);
+  // 7. Recent SLG last 10 (0–HR_WEIGHTS.recentSLG)
+  const W_RECENT_SLG = HR_WEIGHTS.recentSLG; // 10
+  const recentSlg = clamp((batter.last10SLG / 0.700) * W_RECENT_SLG, W_RECENT_SLG);
   components.push({
     label: "SLG Last 10",
     earned: Math.round(recentSlg),
-    max: 7,
+    max: W_RECENT_SLG,
     value: fmt(batter.last10SLG),
   });
 
-  // 8. Barrel % (0–10)
+  // 8. Barrel % (0–HR_WEIGHTS.barrel) — top Statcast HR predictor (r=0.106)
+  const W_BARREL = HR_WEIGHTS.barrel; // 12
   let barrelScore = 0;
   if (batter.barrelPct !== undefined && batter.barrelPct > 0) {
-    barrelScore = clamp((batter.barrelPct / 20) * 10, 10);
+    barrelScore = clamp((batter.barrelPct / 20) * W_BARREL, W_BARREL);
   }
   components.push({
     label: "Barrel %",
     earned: Math.round(barrelScore),
-    max: 10,
+    max: W_BARREL,
     value: batter.barrelPct !== undefined ? `${batter.barrelPct.toFixed(1)}%` : "—",
   });
 
-  // 9. Pitcher HR allowed — season rate (0–8)
+  // 9. Hard Hit % (0–HR_WEIGHTS.hardHit)
+  const W_HH_HR = HR_WEIGHTS.hardHit; // 8
+  let hardHitHRScore = 0;
+  if (batter.hardHitPct !== undefined && batter.hardHitPct > 0) {
+    hardHitHRScore = clamp((batter.hardHitPct / 55) * W_HH_HR, W_HH_HR);
+  }
+  components.push({
+    label: "Hard Hit %",
+    earned: Math.round(hardHitHRScore),
+    max: W_HH_HR,
+    value: batter.hardHitPct !== undefined ? `${batter.hardHitPct.toFixed(1)}%` : "—",
+  });
+
+  // 10. Pitcher HR allowed — season rate (0–HR_WEIGHTS.pitcherHR)
+  const W_PITCHER_HR = HR_WEIGHTS.pitcherHR; // 7
   let pitcherHRScore = 0;
   if (pitcher) {
     const l3hr  = pitcher.last3HRAllowed    ?? 0;
@@ -440,7 +490,7 @@ export function calcHRScoreBreakdown(
     const hrPer9 = l3ip > 0
       ? (l3hr / l3ip) * 9
       : szHR > 0 ? szHR / 30 : 0;
-    pitcherHRScore = clamp((hrPer9 / 2.0) * 8, 8);
+    pitcherHRScore = clamp((hrPer9 / 2.0) * W_PITCHER_HR, W_PITCHER_HR);
     const hrTier =
       hrPer9 >= 1.8 ? "HR prone" :
       hrPer9 >= 1.2 ? "above avg" :
@@ -448,12 +498,12 @@ export function calcHRScoreBreakdown(
     components.push({
       label: "Pitcher HR Allowed",
       earned: Math.round(pitcherHRScore),
-      max: 8,
+      max: W_PITCHER_HR,
       value: `${l3hr} in L3 starts — ${hrTier}`,
     });
   }
 
-  // 10. H2H HR rate vs current pitcher (0–4, min 8 AB)
+  // 11. H2H HR rate vs current pitcher (0–4, min 8 AB)
   let h2hScore = 0;
   const h2h = batter.vsCurrentPitcher;
   if (h2h && h2h.atBats >= 8) {
@@ -472,7 +522,7 @@ export function calcHRScoreBreakdown(
 
   const total = Math.min(100, Math.max(0, Math.round(
     recentHR + slg + matchup + park + pullScore + wxScore +
-    recentSlg + barrelScore + pitcherHRScore + h2hScore
+    recentSlg + barrelScore + hardHitHRScore + pitcherHRScore + h2hScore
   )));
 
   return { total, components };
