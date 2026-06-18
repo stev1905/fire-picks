@@ -119,6 +119,12 @@ export interface MLBBatter {
   baVsFastball?: number;   // batting avg vs fastballs
   baVsBreaking?: number;   // batting avg vs breaking balls
   whiffVsBreaking?: number; // whiff rate vs breaking balls
+  // Home / Away splits
+  homeAVG?: number;
+  awayAVG?: number;
+  homeSLG?: number;
+  awaySLG?: number;
+  isHome?: boolean;  // true = batter's team is home in today's game
   // Per-zone contact profile (sorted by xBA desc — hot zones first)
   zoneProfile?: BatterZoneSlot[];
   // Career head-to-head vs opposing pitcher

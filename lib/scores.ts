@@ -143,35 +143,54 @@ export function calcHitScoreBreakdown(
     value: `${fmt(batter.last3AVG)} / ${fmt(batter.last10AVG)}`,
   });
 
-  // 2. Hit consistency (0–11)
+  // 2. Hit consistency (0–9)
   const gp = batter.last10Games.length;
   const hitsIn10 = gp > 0 ? batter.last10Games.filter((g) => g.hits > 0).length : 0;
-  const consistency = gp > 0 ? (hitsIn10 / gp) * 11 : 0;
+  const consistency = gp > 0 ? (hitsIn10 / gp) * 9 : 0;
   components.push({
     label: "Hit Rate (last 10)",
     earned: Math.round(consistency),
-    max: 11,
+    max: 9,
     value: `${hitsIn10}/${gp} games`,
   });
 
-  // 3. Matchup vs pitcher hand (0–19)
+  // 3. Matchup vs pitcher hand (0–15)
   let matchup: number;
   if (pitcher) {
     const matchupAvg = pitcher.hand === "L" ? batter.avgVsLeft : batter.avgVsRight;
-    matchup = clamp((matchupAvg / 0.360) * 19, 19);
+    matchup = clamp((matchupAvg / 0.360) * 15, 15);
     components.push({
       label: `AVG vs ${pitcher.hand === "L" ? "LHP" : "RHP"}`,
       earned: Math.round(matchup),
-      max: 19,
+      max: 15,
       value: fmt(matchupAvg),
     });
   } else {
-    matchup = clamp((batter.seasonAVG / 0.340) * 12, 12);
+    matchup = clamp((batter.seasonAVG / 0.340) * 10, 10);
     components.push({
       label: "Season AVG (no SP)",
       earned: Math.round(matchup),
-      max: 12,
+      max: 10,
       value: fmt(batter.seasonAVG),
+    });
+  }
+
+  // 3b. Home / Away split (0–7)
+  let homeAwayScore = 0;
+  const hasHomeSplit = batter.homeAVG !== undefined && batter.awayAVG !== undefined
+    && (batter.homeAVG > 0 || batter.awayAVG > 0);
+  if (hasHomeSplit && batter.isHome !== undefined) {
+    const situationalAvg = batter.isHome ? batter.homeAVG! : batter.awayAVG!;
+    homeAwayScore = clamp((situationalAvg / 0.340) * 7, 7);
+    const diff = (batter.homeAVG! - batter.awayAVG!) * 1000;
+    const splitNote = Math.abs(diff) >= 25
+      ? ` (${diff > 0 ? "+" : ""}${diff.toFixed(0)} H/A split)`
+      : "";
+    components.push({
+      label: batter.isHome ? "Home AVG" : "Road AVG",
+      earned: Math.round(homeAwayScore),
+      max: 7,
+      value: `${fmt(situationalAvg)}${splitNote}`,
     });
   }
 
@@ -233,15 +252,15 @@ export function calcHitScoreBreakdown(
     value: batter.xBA !== undefined ? fmt(batter.xBA) : "—",
   });
 
-  // 9. Hard Hit % (0–5)
+  // 9. Hard Hit % (0–4)
   let hardHitScore = 0;
   if (batter.hardHitPct !== undefined && batter.hardHitPct > 0) {
-    hardHitScore = clamp((batter.hardHitPct / 55) * 5, 5);
+    hardHitScore = clamp((batter.hardHitPct / 55) * 4, 4);
   }
   components.push({
     label: "Hard Hit %",
     earned: Math.round(hardHitScore),
-    max: 5,
+    max: 4,
     value: batter.hardHitPct !== undefined ? `${batter.hardHitPct.toFixed(1)}%` : "—",
   });
 
@@ -271,7 +290,7 @@ export function calcHitScoreBreakdown(
   }
 
   const total = Math.min(100, Math.max(0, Math.round(
-    form + consistency + matchup + streak + park + pitcherScore +
+    form + consistency + matchup + homeAwayScore + streak + park + pitcherScore +
     (opts.weather && opts.cfBearing !== undefined ? components.find(c => c.label === "Wind & Weather")!.earned : 0) +
     xBAScore + hardHitScore + h2hScore + pitchMatchupScore
   )));

@@ -521,7 +521,7 @@ export async function fetchBatterStats(playerId: number, season: number): Promis
   try {
     const [gameLogRes, splitsRes, seasonRes] = await Promise.allSettled([
       get<any>(`/people/${playerId}/stats?stats=gameLog&season=${season}&group=hitting`),
-      get<any>(`/people/${playerId}/stats?stats=statSplits&season=${season}&group=hitting&sitCodes=vl,vr`),
+      get<any>(`/people/${playerId}/stats?stats=statSplits&season=${season}&group=hitting&sitCodes=vl,vr,h,a`),
       get<any>(`/people/${playerId}/stats?stats=season&season=${season}&group=hitting`),
     ]);
 
@@ -603,19 +603,17 @@ export async function fetchBatterStats(playerId: number, season: number): Promis
       last3HR = w3.hr; last6HR = w6.hr; last10HR = w10.hr;
     }
 
-    // Splits vs L/R
+    // Splits vs L/R and Home/Away
     let avgVsLeft = 0, avgVsRight = 0, slgVsLeft = 0, slgVsRight = 0;
+    let homeAVG = 0, awayAVG = 0, homeSLG = 0, awaySLG = 0;
     if (splitsRes.status === "fulfilled") {
       for (const block of splitsRes.value.stats ?? []) {
         for (const split of block.splits ?? []) {
-          if (split.split?.code === "vl") {
-            avgVsLeft = parseFloat(split.stat.avg ?? "0");
-            slgVsLeft = parseFloat(split.stat.slg ?? "0");
-          }
-          if (split.split?.code === "vr") {
-            avgVsRight = parseFloat(split.stat.avg ?? "0");
-            slgVsRight = parseFloat(split.stat.slg ?? "0");
-          }
+          const code = split.split?.code;
+          if (code === "vl") { avgVsLeft  = parseFloat(split.stat.avg ?? "0"); slgVsLeft  = parseFloat(split.stat.slg ?? "0"); }
+          if (code === "vr") { avgVsRight = parseFloat(split.stat.avg ?? "0"); slgVsRight = parseFloat(split.stat.slg ?? "0"); }
+          if (code === "h")  { homeAVG    = parseFloat(split.stat.avg ?? "0"); homeSLG    = parseFloat(split.stat.slg ?? "0"); }
+          if (code === "a")  { awayAVG    = parseFloat(split.stat.avg ?? "0"); awaySLG    = parseFloat(split.stat.slg ?? "0"); }
         }
       }
     }
@@ -631,6 +629,7 @@ export async function fetchBatterStats(playerId: number, season: number): Promis
       gameLogCount,
       avgVsLeft, avgVsRight,
       slgVsLeft, slgVsRight,
+      homeAVG, awayAVG, homeSLG, awaySLG,
       last10Games,
     };
   } catch {
@@ -857,7 +856,10 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
         if (r) batterStatsMap[id] = { ...batterStatsMap[id], vsCurrentPitcher: r };
       }
 
-      const buildBatter = (p: { id: number; name: string; position: string; battingOrder: number }): MLBBatter => ({
+      const buildBatter = (
+        p: { id: number; name: string; position: string; battingOrder: number },
+        isHome: boolean,
+      ): MLBBatter => ({
         id: p.id,
         name: p.name,
         position: p.position,
@@ -872,6 +874,7 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
         slgVsLeft: 0, slgVsRight: 0,
         last10Games: [],
         ...batterStatsMap[p.id],
+        isHome,
         zoneProfile: batterZoneMap.get(p.id),
       });
 
@@ -923,8 +926,8 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
         venue: (item as any).venueName ?? "",
         venueId: item.venueId,
         parkFactor: parkInfo.factor,
-        homeLineup: homeLineup.map(buildBatter),
-        awayLineup: awayLineup.map(buildBatter),
+        homeLineup: homeLineup.map((p) => buildBatter(p, true)),
+        awayLineup: awayLineup.map((p) => buildBatter(p, false)),
         homeStartingPitcher: buildPitcher(homePitcherId, homePitcherStats, homePitcherZone, nameMap),
         awayStartingPitcher: buildPitcher(awayPitcherId, awayPitcherStats, awayPitcherZone, nameMap),
       };
