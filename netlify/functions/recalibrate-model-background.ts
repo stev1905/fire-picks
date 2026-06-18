@@ -75,35 +75,52 @@ function normalizeColumn(values: number[]): { norm: number[]; min: number; range
   return { norm: values.map(v => (v - min) / range), min, range };
 }
 
-/** Convert raw logistic coefficients → named component weights summing to budget */
+/** Convert raw logistic coefficients → named component weights summing to budget.
+ *  Applies a per-weight cap (max 30% of budget) to prevent any single feature dominating. */
 function coeffsToWeights(
   featureNames: string[],
   rawCoeffs: number[],
-  groupMap: Record<string, string>, // featureName → weightKey
+  groupMap: Record<string, string>,
   budget: number,
+  maxSharePct = 0.30, // no single weight key gets more than 30% of budget
 ): Record<string, number> {
-  // Group coefficients by weight key, summing absolute values
   const grouped: Record<string, number> = {};
   for (let i = 0; i < featureNames.length; i++) {
     const key = groupMap[featureNames[i]] ?? featureNames[i];
     grouped[key] = (grouped[key] ?? 0) + Math.abs(rawCoeffs[i]);
   }
 
-  // Scale to budget
   const total = Object.values(grouped).reduce((a, b) => a + b, 0);
   if (total === 0) return grouped;
 
+  // First pass: scale to budget, then cap at maxSharePct
+  const maxPts = Math.floor(budget * maxSharePct);
   const scaled: Record<string, number> = {};
+  let capped = 0;
   for (const [k, v] of Object.entries(grouped)) {
-    scaled[k] = Math.max(1, Math.round((v / total) * budget));
+    const raw = (v / total) * budget;
+    if (raw > maxPts) { scaled[k] = maxPts; capped += raw - maxPts; }
+    else scaled[k] = raw;
   }
 
-  // Correct rounding drift
+  // Redistribute capped points proportionally to the uncapped keys
+  if (capped > 0) {
+    const uncapped = Object.entries(scaled).filter(([, v]) => v < maxPts);
+    const uncappedSum = uncapped.reduce((s, [, v]) => s + v, 0);
+    for (const [k, v] of uncapped) {
+      scaled[k] = v + capped * (v / (uncappedSum || 1));
+    }
+  }
+
+  // Round each weight, then fix rounding drift by adjusting the median-valued key
+  // (avoids spiking the largest key above the cap)
+  for (const k of Object.keys(scaled)) scaled[k] = Math.max(1, Math.round(scaled[k]));
   const scaledTotal = Object.values(scaled).reduce((a, b) => a + b, 0);
   const drift = budget - scaledTotal;
   if (drift !== 0) {
-    const largest = Object.entries(scaled).sort((a, b) => b[1] - a[1])[0][0];
-    scaled[largest] += drift;
+    const sorted = Object.entries(scaled).sort((a, b) => b[1] - a[1]);
+    const target = sorted[Math.floor(sorted.length / 2)][0]; // pick median, not largest
+    scaled[target] = Math.max(1, scaled[target] + drift);
   }
 
   return scaled;
@@ -194,18 +211,29 @@ export default async function handler() {
 
   console.log(`[recalibrate] Loading outcomes since ${cutoffDate}...`);
 
-  const { data: rawRows, error } = await sb
-    .from("batter_outcomes")
-    .select("got_hit, got_hr, hit_score, hr_score, features")
-    .gte("date", cutoffDate);
+  // Paginate — Supabase default limit is 1,000 rows per request
+  const PAGE = 1000;
+  const allRows: OutcomeRow[] = [];
+  let page = 0;
+  while (true) {
+    const { data, error } = await sb
+      .from("batter_outcomes")
+      .select("got_hit, got_hr, hit_score, hr_score, features")
+      .gte("date", cutoffDate)
+      .range(page * PAGE, (page + 1) * PAGE - 1);
+    if (error) { console.error("[recalibrate] Fetch error:", error.message); return; }
+    if (!data || data.length === 0) break;
+    allRows.push(...(data as OutcomeRow[]));
+    if (data.length < PAGE) break;
+    page++;
+  }
 
-  if (error) { console.error("[recalibrate] Fetch error:", error.message); return; }
-  if (!rawRows || rawRows.length < 100) {
-    console.warn(`[recalibrate] Only ${rawRows?.length ?? 0} observations — need ≥100 to retrain. Skipping.`);
+  if (allRows.length < 200) {
+    console.warn(`[recalibrate] Only ${allRows.length} observations — need ≥200 to retrain. Skipping.`);
     return;
   }
 
-  const rows = rawRows as OutcomeRow[];
+  const rows = allRows;
   const n = rows.length;
   console.log(`[recalibrate] Training on ${n} observations...`);
 

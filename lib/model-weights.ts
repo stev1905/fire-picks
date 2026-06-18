@@ -20,24 +20,24 @@
  */
 
 export const HIT_WEIGHTS = {
-  /** last3AVG + last10AVG combined — recent rolling form */
-  form: 20,
-  /** hitRate20 — fraction of last 20 games with a hit (strongest single predictor r=0.251) */
-  consistency: 18,
-  /** avgVsHand — avg vs pitcher handedness (fallback: seasonAVG when null) */
-  vsHand: 16,
-  /** homeAVG or awayAVG — situational split */
-  homeAway: 7,
-  /** hitting streak — logarithmic bonus, significant only for streaks ≥ 5 */
-  streak: 5,
-  /** xBA — Statcast expected batting average */
-  xBA: 9,
+  /** last3AVG + last10AVG — recent rolling form (r=0.026 — weak signal, confirmed) */
+  form: 3,
+  /** hitRate20 — 20-game hit consistency (r=0.251 — 3× stronger than hitRate10) */
+  consistency: 9,
+  /** avgVsHand — avg vs pitcher handedness (strongest predictor, r=0.155) */
+  vsHand: 23,
+  /** homeAVG or awayAVG — situational split (new, needs more data to stabilize) */
+  homeAway: 1,
+  /** hitting streak — logarithmic bonus; streaks ≥5 carry real signal */
+  streak: 10,
+  /** xBA — Statcast quality metric (modest daily signal) */
+  xBA: 1,
   /** hardHitPct — hard hit ball % */
-  hardHit: 3,
-  /** pitcher's hits allowed last 3 starts — hittability signal */
-  pitcherH: 4,
-  /** career H2H avg vs this pitcher (min 5 AB) */
-  h2h: 3,
+  hardHit: 2,
+  /** pitcher's hits allowed last 3 starts — 2nd strongest signal (15pp lift confirmed) */
+  pitcherH: 25,
+  /** career H2H avg vs this pitcher (min 5 AB) — surprisingly predictive (r=0.155) */
+  h2h: 11,
 };
 
 export const HR_WEIGHTS = {
