@@ -641,10 +641,11 @@ export async function fetchBatterStats(playerId: number, season: number): Promis
 
 export async function fetchPitcherStats(playerId: number, season: number): Promise<Partial<MLBPitcher>> {
   try {
-    const [gameLogRes, seasonRes, personRes] = await Promise.allSettled([
+    const [gameLogRes, seasonRes, personRes, splitsRes] = await Promise.allSettled([
       get<any>(`/people/${playerId}/stats?stats=gameLog&season=${season}&group=pitching`),
       get<any>(`/people/${playerId}/stats?stats=season&season=${season}&group=pitching`),
       get<any>(`/people/${playerId}`),
+      get<any>(`/people/${playerId}/stats?stats=statSplits&season=${season}&group=pitching&sitCodes=vl,vr`),
     ]);
 
     let seasonERA = 0;
@@ -711,6 +712,19 @@ export async function fetchPitcherStats(playerId: number, season: number): Promi
     }
     const last3HRAllowed = last3Starts.reduce((s, g) => s + ((g as any).hr || 0), 0);
 
+    // Pitcher BAA splits vs left/right-handed batters
+    let baaVsLeft: number | undefined;
+    let baaVsRight: number | undefined;
+    if (splitsRes.status === "fulfilled") {
+      const splitRows: any[] = splitsRes.value.stats?.[0]?.splits ?? [];
+      for (const row of splitRows) {
+        const avg = parseFloat(row.stat?.avg ?? "0");
+        if (!avg) continue;
+        if (row.split?.code === "vl") baaVsLeft  = avg;
+        if (row.split?.code === "vr") baaVsRight = avg;
+      }
+    }
+
     return {
       hand,
       seasonERA,
@@ -721,6 +735,8 @@ export async function fetchPitcherStats(playerId: number, season: number): Promi
       last3Starts,
       seasonHRAllowed,
       last3HRAllowed,
+      baaVsLeft,
+      baaVsRight,
     };
   } catch {
     return {};

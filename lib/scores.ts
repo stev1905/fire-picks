@@ -242,22 +242,53 @@ export function calcHitScoreBreakdown(
     value: `${parkTier} (${parkFactor.toFixed(2)})`,
   });
 
-  // 6. Pitcher H allowed (0–HIT_WEIGHTS.pitcherH)
+  // 6. Pitcher H/9 rate (0–HIT_WEIGHTS.pitcherH)
+  //    Rate-based so relievers and starters are comparable.
+  //    5.0 H/9 = elite (0 pts), 11.0 H/9 = very hittable (max pts). League avg ~8.5.
   const W_PITCHER_H = HIT_WEIGHTS.pitcherH; // 4
   let pitcherScore = 0;
   if (pitcher) {
-    const softness = Math.max(0, (pitcher.last3HitsAllowed - 4) / 11);
-    pitcherScore = clamp(softness * W_PITCHER_H, W_PITCHER_H);
+    const h9 = pitcher.last3InningsPitched > 0
+      ? (pitcher.last3HitsAllowed / pitcher.last3InningsPitched) * 9
+      : null;
+    if (h9 !== null) {
+      pitcherScore = clamp(((h9 - 5.0) / 6.0) * W_PITCHER_H, W_PITCHER_H);
+    }
     const pitcherTier =
-      pitcher.last3HitsAllowed >= 12 ? "very hittable" :
-      pitcher.last3HitsAllowed >= 8  ? "above avg" :
-      pitcher.last3HitsAllowed >= 5  ? "average" : "tough";
+      h9 === null          ? "no data" :
+      h9 >= 10.0           ? "very hittable" :
+      h9 >= 8.5            ? "above avg" :
+      h9 >= 7.0            ? "average" : "tough";
+    const ipLabel = pitcher.last3InningsPitched > 0
+      ? `${pitcher.last3HitsAllowed}H / ${pitcher.last3InningsPitched.toFixed(1)}IP`
+      : `${pitcher.last3HitsAllowed} hits`;
     components.push({
-      label: "Pitcher H Allowed (L3 starts)",
+      label: "Pitcher H/9 (L3 apps)",
       earned: Math.round(pitcherScore),
       max: W_PITCHER_H,
-      value: `${pitcher.last3HitsAllowed} hits — ${pitcherTier}`,
+      value: h9 !== null ? `${h9.toFixed(1)} H/9 (${ipLabel}) — ${pitcherTier}` : `${ipLabel} — ${pitcherTier}`,
     });
+  }
+
+  // 6b. Pitcher BAA split vs batter hand (0–4)
+  //     How does this pitcher perform specifically vs L or R batters?
+  let pitcherSplitScore = 0;
+  if (pitcher && (pitcher.baaVsLeft !== undefined || pitcher.baaVsRight !== undefined)) {
+    const baaVsHand = batter.hand === "L" ? pitcher.baaVsLeft : pitcher.baaVsRight;
+    if (baaVsHand !== undefined && baaVsHand > 0) {
+      // .190 = elite vs this hand (0 pts), .340 = very hittable (4 pts)
+      pitcherSplitScore = clamp(((baaVsHand - 0.190) / 0.150) * 4, 4);
+      const splitTier =
+        baaVsHand >= 0.290 ? "hittable" :
+        baaVsHand >= 0.250 ? "average"  : "tough";
+      const handLabel = batter.hand === "L" ? "vs LHB" : "vs RHB";
+      components.push({
+        label: `Pitcher BAA ${handLabel}`,
+        earned: Math.round(pitcherSplitScore),
+        max: 4,
+        value: `${fmt(baaVsHand)} — ${splitTier}`,
+      });
+    }
   }
 
   // 7. Weather (0–8)
@@ -363,7 +394,7 @@ export function calcHitScoreBreakdown(
   }
 
   const total = Math.min(100, Math.max(0, Math.round(
-    form + consistencyScore + matchup + homeAwayScore + streakScore + park + pitcherScore +
+    form + consistencyScore + matchup + homeAwayScore + streakScore + park + pitcherScore + pitcherSplitScore +
     (opts.weather && opts.cfBearing !== undefined ? components.find(c => c.label === "Wind & Weather")!.earned : 0) +
     xBAScore + hardHitScore + h2hScore + pitchMatchupScore + momentumMod + slotMod
   )));

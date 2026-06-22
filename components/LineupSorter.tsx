@@ -97,13 +97,37 @@ export function LineupSorter({ lineup, opposingPitcher, parkFactor = 1.0, venueI
   return (
     <div className="space-y-3">
       {opposingPitcher && (
-        <div className="text-sm text-muted-foreground">
-          Facing:{" "}
-          <span className="text-foreground font-medium">{opposingPitcher.name}</span>
-          <Badge variant="outline" className="ml-1.5 text-[10px]">
+        <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-sm text-muted-foreground">
+          <span>
+            Facing:{" "}
+            <span className="text-foreground font-medium">{opposingPitcher.name}</span>
+          </span>
+          <Badge variant="outline" className="text-[10px]">
             {opposingPitcher.hand}HP
           </Badge>
-          <span className="ml-1.5">ERA {opposingPitcher.seasonERA.toFixed(2)}</span>
+          <span>ERA {opposingPitcher.seasonERA.toFixed(2)}</span>
+          {opposingPitcher.baaVsLeft !== undefined && (
+            <span className={`text-[11px] px-1.5 py-0.5 rounded font-mono ${
+              opposingPitcher.baaVsLeft >= 0.280
+                ? "bg-green-500/15 text-green-700 dark:text-green-400"
+                : opposingPitcher.baaVsLeft <= 0.220
+                ? "bg-red-500/15 text-red-700 dark:text-red-400"
+                : "bg-muted text-muted-foreground"
+            }`}>
+              vs LHB {opposingPitcher.baaVsLeft.toFixed(3).replace(/^0/, "")}
+            </span>
+          )}
+          {opposingPitcher.baaVsRight !== undefined && (
+            <span className={`text-[11px] px-1.5 py-0.5 rounded font-mono ${
+              opposingPitcher.baaVsRight >= 0.280
+                ? "bg-green-500/15 text-green-700 dark:text-green-400"
+                : opposingPitcher.baaVsRight <= 0.220
+                ? "bg-red-500/15 text-red-700 dark:text-red-400"
+                : "bg-muted text-muted-foreground"
+            }`}>
+              vs RHB {opposingPitcher.baaVsRight.toFixed(3).replace(/^0/, "")}
+            </span>
+          )}
         </div>
       )}
 

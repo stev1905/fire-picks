@@ -55,6 +55,9 @@ export interface MLBPitcher {
   xBAAgainst?: number;
   whiffPct?: number;
   kPct?: number;
+  // Pitcher splits — batting avg allowed vs left/right-handed batters (season)
+  baaVsLeft?: number;
+  baaVsRight?: number;
   // Per-zone pitch location profile (top 5 zones by frequency)
   zoneProfile?: PitcherZoneSlot[];
 }

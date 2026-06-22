@@ -47,10 +47,9 @@ function pitchMatchupBadge(batter: MLBBatter, pitcher?: MLBPitcher) {
 
 function h2hBadge(batter: MLBBatter) {
   const h2h = batter.vsCurrentPitcher;
-  if (!h2h || h2h.atBats === 0) return null;
+  if (!h2h || h2h.atBats < 5) return null; // too small to show — noise, not signal
   const avgStr = h2h.avg.toFixed(3).replace(/^0/, "");
   const label = `H2H: ${avgStr} (${h2h.hits}/${h2h.atBats})`;
-  if (h2h.atBats < 5) return { label, color: "bg-muted/60 text-muted-foreground" };
   if (h2h.avg >= 0.300) return { label, color: "bg-blue-500/80 text-white" };
   if (h2h.avg <= 0.180) return { label, color: "bg-orange-500/80 text-white" };
   return { label, color: "bg-muted text-muted-foreground" };
