@@ -2,6 +2,7 @@
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 import { buildDailySnapshot } from "@/lib/mlbApi";
+import { writeOutcomes } from "@/lib/outcomes";
 
 function supabase() {
   return createClient(
@@ -15,13 +16,16 @@ export async function POST(request: Request) {
   const date = searchParams.get("date") ?? new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
   try {
+    const sb       = supabase();
     const snapshot = await buildDailySnapshot(date);
 
-    const { error } = await supabase()
+    const { error } = await sb
       .from("snapshots")
       .upsert({ date, data: snapshot, synced_at: new Date().toISOString() });
 
     if (error) throw error;
+
+    await writeOutcomes(snapshot, sb);
 
     return NextResponse.json({ success: true, date, games: snapshot.games.length });
   } catch (err) {

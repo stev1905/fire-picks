@@ -1,9 +1,15 @@
+import type { Config } from "@netlify/functions";
 import { createClient } from "@supabase/supabase-js";
 import { buildDailySnapshot } from "../../lib/mlbApi";
 import { writeOutcomes } from "../../lib/outcomes";
 
 // Background function — no timeout limit (up to 15 min)
+// Runs every 2 hours from 12pm–10pm EDT (16,18,20,22,0,2 UTC)
 // Trigger manually: POST /.netlify/functions/sync-mlb-data-background
+export const config: Config = {
+  schedule: "0 16,18,20,22,0,2 * * *",
+};
+
 function supabase() {
   return createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
