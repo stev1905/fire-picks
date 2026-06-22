@@ -1,4 +1,5 @@
 import type { DailySnapshot, MLBBatter, MLBGame, MLBPitcher } from "@/types/mlb";
+import { calcHitScore, getColdStreak } from "@/lib/scores";
 
 export interface PitcherAnalyticsRow {
   id: number;
@@ -306,6 +307,146 @@ export function getHitConsistency(snapshot: DailySnapshot): HitConsistencyRow[] 
   return rows
     .sort((a, b) => b.consistencyScore - a.consistencyScore)
     .slice(0, 40);
+}
+
+export interface AiPickRow {
+  id: number;
+  name: string;
+  team: string;
+  gamePk: number;
+  gameTime: string;
+  gameTimeIso: string;
+  hitScore: number;
+  slot: number;
+  pitcherName: string;
+  pitcherHand: "L" | "R";
+  pitcherERA: number;
+  pitcherH9: number | null;
+  hitRate: number;
+  streak: number;
+  coldStreak: number;
+  bounceback: boolean;
+  vsHand: number;
+  blurb: string;
+}
+
+function formatGameTime(isoStr: string): string {
+  try {
+    return new Date(isoStr).toLocaleTimeString("en-US", {
+      timeZone: "America/New_York",
+      hour: "numeric",
+      minute: "2-digit",
+      hour12: true,
+    }) + " ET";
+  } catch {
+    return isoStr;
+  }
+}
+
+function makeBlurb(
+  name: string,
+  hitRate: number,
+  streak: number,
+  coldStreak: number,
+  bounceback: boolean,
+  pitcherName: string,
+  pitcherHand: "L" | "R",
+  pitcherH9: number | null,
+  vsHand: number,
+): string {
+  const parts: string[] = [];
+
+  if (bounceback) {
+    parts.push(`Bounce-back spot — ${Math.round(hitRate * 100)}% hit rate, hitless yesterday`);
+  } else if (coldStreak >= 3) {
+    parts.push(`${coldStreak}-game cold streak — fading`);
+  }
+
+  if (streak >= 5) parts.push(`${streak}-game hit streak`);
+  else if (streak >= 3 && !bounceback) parts.push(`${streak}-game streak`);
+
+  if (pitcherH9 !== null && pitcherH9 >= 11.0) {
+    parts.push(`${pitcherName} allowing ${pitcherH9.toFixed(1)} H/9`);
+  } else if (pitcherH9 !== null && pitcherH9 >= 9.5) {
+    parts.push(`${pitcherName} hittable (${pitcherH9.toFixed(1)} H/9)`);
+  }
+
+  if (vsHand >= 0.300) {
+    parts.push(`.${Math.round(vsHand * 1000)} avg vs ${pitcherHand}HP`);
+  }
+
+  if (parts.length === 0 && hitRate >= 0.70) {
+    parts.push(`${Math.round(hitRate * 100)}% hit rate over last 20 games`);
+  }
+
+  if (parts.length === 0) parts.push(`Strong composite score vs ${pitcherName}`);
+
+  return parts.join(" · ");
+}
+
+/** All batters today scoring ≥60 on the full hit model, sorted by score desc */
+export function buildAiPicksRows(snapshot: DailySnapshot): AiPickRow[] {
+  const rows: AiPickRow[] = [];
+
+  for (const game of snapshot.games) {
+    const pairs: [MLBBatter[], MLBPitcher | undefined][] = [
+      [game.awayLineup, game.homeStartingPitcher],
+      [game.homeLineup, game.awayStartingPitcher],
+    ];
+    for (const [lineup, pitcher] of pairs) {
+      for (const batter of lineup) {
+        const score = calcHitScore(batter, pitcher, game.parkFactor);
+        if (score < 60) continue;
+
+        const prior = batter.last10Games ?? [];
+        const coldStreak = getColdStreak(batter);
+        const hitRate =
+          batter.hitRate20 ??
+          (prior.length > 0 ? prior.filter((g) => (g.hits ?? 0) > 0).length / prior.length : 0);
+        const bounceback =
+          coldStreak === 1 && score >= 50 && hitRate >= 0.50;
+        const h9 =
+          pitcher && pitcher.last3InningsPitched > 0
+            ? (pitcher.last3HitsAllowed / pitcher.last3InningsPitched) * 9
+            : null;
+        const vsHand =
+          pitcher?.hand === "L" ? batter.avgVsLeft : batter.avgVsRight ?? 0;
+
+        rows.push({
+          id: batter.id,
+          name: batter.name,
+          team: batter.teamAbbreviation ?? game.awayTeam.abbreviation,
+          gamePk: game.gamePk,
+          gameTime: formatGameTime(game.gameDate),
+          gameTimeIso: game.gameDate,
+          hitScore: score,
+          slot: batter.battingOrder ?? 0,
+          pitcherName: pitcher?.name ?? "TBD",
+          pitcherHand: pitcher?.hand ?? "R",
+          pitcherERA: pitcher?.seasonERA ?? 0,
+          pitcherH9: h9,
+          hitRate,
+          streak: batter.hittingStreak ?? 0,
+          coldStreak,
+          bounceback,
+          vsHand,
+          blurb: makeBlurb(
+            batter.name,
+            hitRate,
+            batter.hittingStreak ?? 0,
+            coldStreak,
+            bounceback,
+            pitcher?.name ?? "TBD",
+            pitcher?.hand ?? "R",
+            h9,
+            vsHand,
+          ),
+        });
+      }
+    }
+  }
+
+  return rows.sort((a, b) => b.hitScore - a.hitScore);
 }
 
 /** Top 10 hottest pitchers by ERA + K rate */

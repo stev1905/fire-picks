@@ -5,6 +5,7 @@ import {
   getHottestHRHitters,
   getHitConsistency,
   buildPitcherAnalyticsRows,
+  buildAiPicksRows,
 } from "@/lib/analytics";
 import { getGameWeather, analyzeWindProfile } from "@/lib/weather";
 import { getParkData } from "@/lib/parkFactors";
@@ -12,6 +13,7 @@ import Link from "next/link";
 import { HRChart } from "@/components/analytics/HRChart";
 import { PitchingAnalyticsTable } from "@/components/analytics/PitchingAnalyticsTable";
 import { HitConsistencyTable } from "@/components/analytics/HitConsistencyTable";
+import { AiPicksTable } from "@/components/analytics/AiPicksTable";
 import { ChefLoading } from "@/components/ChefLoading";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
@@ -161,6 +163,8 @@ export default async function AnalyticsPage() {
     getParkHRRankings(snapshot),
   ]);
 
+  const aiPicks = buildAiPicksRows(snapshot);
+
   const allPitchers = buildPitcherAnalyticsRows([snapshot], today);
 
   return (
@@ -172,11 +176,27 @@ export default async function AnalyticsPage() {
         </p>
       </div>
 
-      <Tabs defaultValue="hitters">
+      <Tabs defaultValue="ai-picks">
         <TabsList className="mb-6">
+          <TabsTrigger value="ai-picks">AI Picks</TabsTrigger>
           <TabsTrigger value="hitters">Hitters Analytics</TabsTrigger>
           <TabsTrigger value="pitching">Pitching Analytics</TabsTrigger>
         </TabsList>
+
+        {/* ── AI Picks Tab ── */}
+        <TabsContent value="ai-picks">
+          <div className="space-y-4">
+            <div>
+              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-1">
+                Today&apos;s Best AI Picks
+              </h2>
+              <p className="text-xs text-muted-foreground mb-4">
+                Batters scoring ≥60 on the full hit model — weighted by consistency, matchup, pitcher H/9, streak, bounce-back &amp; lineup slot · sort by score, game time, or hit rate
+              </p>
+            </div>
+            <AiPicksTable data={aiPicks} />
+          </div>
+        </TabsContent>
 
         {/* ── Hitters Tab ── */}
         <TabsContent value="hitters">
