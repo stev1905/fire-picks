@@ -113,19 +113,19 @@ export function calcPitchMatchup(
 }
 
 /**
- * Hit Score (0–100)
+ * Hit Score (0–100) — base weights sum to 85; see lib/model-weights.ts
  *
- *  20 — Recent AVG form: last3AVG + last10AVG      (HIT_WEIGHTS.form)
- *  18 — Hit consistency: hitRate20 (or hitRate10)  (HIT_WEIGHTS.consistency)
- *  16 — Matchup AVG vs pitcher hand                (HIT_WEIGHTS.vsHand)
- *   7 — Home / Away situational AVG                (HIT_WEIGHTS.homeAway)
- *   5 — Hitting streak (logarithmic, ≥5 significant) (HIT_WEIGHTS.streak)
- *   9 — xBA (Statcast)                             (HIT_WEIGHTS.xBA)
- *   3 — Hard Hit %                                 (HIT_WEIGHTS.hardHit)
- *   4 — Pitcher H allowed (L3 starts)              (HIT_WEIGHTS.pitcherH)
- *   3 — Career H2H vs opposing pitcher             (HIT_WEIGHTS.h2h)
- *   ~8 — Weather (wind direction + temperature)    [modifier, not in base sum]
- *   ~8 — Pitch matchup                             [modifier, not in base sum]
+ *  25 — Pitcher H/9 last 3 starts (r=0.132, 21.7pp spread)  (HIT_WEIGHTS.pitcherH)
+ *  23 — AVG vs pitcher hand (r=0.135, 100% coverage)         (HIT_WEIGHTS.vsHand)
+ *   9 — Hit consistency: hitRate20 or hitRate10              (HIT_WEIGHTS.consistency)
+ *   9 — Career H2H avg vs this pitcher (r=0.139)             (HIT_WEIGHTS.h2h)
+ *   7 — Hitting streak (logarithmic, ≥5 significant)         (HIT_WEIGHTS.streak)
+ *   4 — Home / Away situational AVG (r=0.107, 9.8pp spread)  (HIT_WEIGHTS.homeAway)
+ *   4 — xBA Statcast (r=0.058, 100% coverage)                (HIT_WEIGHTS.xBA)
+ *   2 — Recent AVG form: last3AVG + last10AVG (r=0.01-0.03)  (HIT_WEIGHTS.form)
+ *   2 — Hard Hit %                                            (HIT_WEIGHTS.hardHit)
+ *   ~8 — Weather (wind direction + temperature)               [modifier, not in base sum]
+ *   ~8 — Pitch matchup                                        [modifier, not in base sum]
  */
 export function calcHitScoreBreakdown(
   batter: MLBBatter,

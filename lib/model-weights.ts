@@ -1,43 +1,49 @@
 /**
  * Model weights for Hit Score and HR Score.
  *
- * Derived from logistic regression analysis over 30 days of MLB snapshots
- * (5,224 batter-game observations, 2026-05-20 → 2026-06-18).
+ * Validated via backtest over 45 days / 7,967 batter-game observations
+ * (2026-05-19 → 2026-07-02). Production H/9 normalization confirmed correct.
  *
- * Key findings driving these weights:
- *  - hitRate20 (r=0.251) and hitRate30 (r=0.226) are 3× more predictive
- *    than hitRate10 (r=0.072) — longer consistency windows matter
- *  - avgVsHand is a strong predictor; null values should fall back to seasonAVG
- *  - last3HitsAllowed captures real pitcher hittability signal
- *  - Hitting streak shows modest but real effect (especially ≥5 games)
- *  - xBA and hardHitPct provide Statcast quality-of-contact signal
- *  - For HR: last3HR (r=0.557) and last6HR (r=0.404) dominate all features
- *  - barrelPct (r=0.106) and last10SLG (r=0.252) are the best HR base stats
- *  - parkFactor has near-zero correlation with hits/HRs at this scale
+ * Feature correlations (point-biserial r vs got_hit, from backtest):
+ *  - h2hAVG         r=0.139 — strongest per-PA predictor (36% coverage)
+ *  - avgVsHand      r=0.135 — 100% coverage, top overall discriminator
+ *  - pitcherH (H/9) r=0.132 — 21.7pp spread elite→hittable; stays dominant
+ *  - homeAway       r=0.107 — 9.8pp spread; was underweighted at 1 → raised to 4
+ *  - xBA            r=0.058 — 100% coverage; was underweighted at 1 → raised to 4
+ *  - streak         r=0.031 — real but nonlinear; effect flattens below streak=5
+ *  - hitRate20      r=0.251 (training data) — longer windows more predictive
+ *  - parkFactor: near-zero correlation confirmed; removed from sum
+ *
+ * Changes from prior weights (sum still = 85):
+ *  homeAway:  1 →  4  (+3)  signal confirmed, was effectively ignored
+ *  xBA:       1 →  4  (+3)  100% coverage, decent signal
+ *  streak:   10 →  7  (-3)  overweighted vs data (effect flattens <streak 5)
+ *  form:      3 →  2  (-1)  r=0.01-0.03 — near-useless
+ *  h2h:      11 →  9  (-2)  strong signal; slight trim vs 36.5% coverage
  *
  * HIT_WEIGHTS sum = 85 (leaving ~15 for weather/pitch-matchup modifiers)
  * HR_WEIGHTS  sum = 85 (leaving ~15 for weather/pull-distance modifiers)
  */
 
 export const HIT_WEIGHTS = {
-  /** last3AVG + last10AVG — recent rolling form (r=0.026 — weak signal, confirmed) */
-  form: 3,
-  /** hitRate20 — 20-game hit consistency (r=0.251 — 3× stronger than hitRate10) */
+  /** last3AVG + last10AVG — recent rolling form (r=0.01-0.03 — weak, confirmed) */
+  form: 2,
+  /** hitRate20 — 20-game hit consistency (r=0.251 in training — longer windows matter) */
   consistency: 9,
-  /** avgVsHand — avg vs pitcher handedness (strongest predictor, r=0.155) */
+  /** avgVsHand — avg vs pitcher handedness (r=0.135, 100% coverage — top discriminator) */
   vsHand: 23,
-  /** homeAVG or awayAVG — situational split (new, needs more data to stabilize) */
-  homeAway: 1,
-  /** hitting streak — logarithmic bonus; streaks ≥5 carry real signal */
-  streak: 10,
-  /** xBA — Statcast quality metric (modest daily signal) */
-  xBA: 1,
-  /** hardHitPct — hard hit ball % */
+  /** homeAVG or awayAVG — situational split (r=0.107, 9.8pp spread; raised from 1) */
+  homeAway: 4,
+  /** hitting streak — logarithmic bonus; real signal ≥5 games (r=0.031 overall) */
+  streak: 7,
+  /** xBA — Statcast expected BA (r=0.058, 100% coverage; raised from 1) */
+  xBA: 4,
+  /** hardHitPct — hard hit ball % (weak r but covers contact quality) */
   hardHit: 2,
-  /** pitcher's hits allowed last 3 starts — 2nd strongest signal (15pp lift confirmed) */
+  /** pitcher H/9 last 3 starts — strong predictor (r=0.132, 21.7pp elite→hittable spread) */
   pitcherH: 25,
-  /** career H2H avg vs this pitcher (min 5 AB) — surprisingly predictive (r=0.155) */
-  h2h: 11,
+  /** career H2H avg vs this pitcher (min 5 AB) — r=0.139, 36.5% coverage */
+  h2h: 9,
 };
 
 export const HR_WEIGHTS = {
