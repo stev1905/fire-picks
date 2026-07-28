@@ -4,7 +4,7 @@ import { useState, useMemo } from "react";
 import Link from "next/link";
 import type { BestSluggerRow } from "@/lib/analytics";
 
-type SortKey = "hrScore" | "gameTime" | "barrelPct" | "hardHitPct" | "xwOBA" | "xSLG" | "flyBallRate" | "pitcherHrP9VsHand";
+type SortKey = "hrScore" | "gameTime" | "barrelPct" | "hardHitPct" | "xwOBA" | "xSLG" | "flyBallRate" | "avgLaunchAngle" | "pitcherHrP9VsHand";
 type SortDir = "asc" | "desc";
 
 function scoreBadge(score: number) {
@@ -98,6 +98,7 @@ export function BestSluggersTable({ data }: Props) {
                 <SortHeader label="xwOBA" col="xwOBA" current={sortKey} dir={sortDir} onSort={handleSort} title="Expected weighted on-base average — best composite power metric" className="min-w-[70px]" />
                 <SortHeader label="xSLG" col="xSLG" current={sortKey} dir={sortDir} onSort={handleSort} title="Expected SLG — expected damage" className="min-w-[64px]" />
                 <SortHeader label="FB%" col="flyBallRate" current={sortKey} dir={sortDir} onSort={handleSort} title="Fly ball + line drive rate" className="min-w-[60px]" />
+                <SortHeader label="Lauch°" col="avgLaunchAngle" current={sortKey} dir={sortDir} onSort={handleSort} title="Average launch angle — higher = more fly balls" className="min-w-[70px]" />
                 <SortHeader label="P HR/9" col="pitcherHrP9VsHand" current={sortKey} dir={sortDir} onSort={handleSort} title="Pitcher HR allowed per 9 innings vs this batter's hand" className="min-w-[70px]" />
                 <th className="px-2 py-2 text-left text-[10px] font-semibold uppercase tracking-wider text-muted-foreground min-w-[150px]">Pitcher</th>
               </tr>
@@ -155,6 +156,11 @@ export function BestSluggersTable({ data }: Props) {
                   {/* FB% */}
                   <td className={`px-2 py-2 text-[12px] font-mono tabular-nums ${statColor(row.flyBallRate, 0.45, 0.58)}`}>
                     {row.flyBallRate !== null ? `${(row.flyBallRate * 100).toFixed(0)}%` : "—"}
+                  </td>
+
+                  {/* Avg Launch Angle */}
+                  <td className={`px-2 py-2 text-[12px] font-mono tabular-nums ${statColor(row.avgLaunchAngle, 10, 18)}`}>
+                    {row.avgLaunchAngle !== null ? `${row.avgLaunchAngle.toFixed(1)}°` : "—"}
                   </td>
 
                   {/* Pitcher HR/9 vs hand */}
