@@ -405,13 +405,15 @@ export function calcHitScoreBreakdown(
 /**
  * HR Score (0–100)
  *
- *  22 — Recent HR activity (L3/L6/L10)            (HR_WEIGHTS.recentHR)
- *  12 — Season SLG                                 (HR_WEIGHTS.seasonSLG)
- *  11 — Matchup SLG vs pitcher hand                (HR_WEIGHTS.slgVsHand)
- *  10 — Recent SLG last 10                         (HR_WEIGHTS.recentSLG)
- *  12 — Barrel %                                   (HR_WEIGHTS.barrel)
- *   8 — Hard Hit %                                 (HR_WEIGHTS.hardHit)
- *   7 — Pitcher HR allowed                         (HR_WEIGHTS.pitcherHR)
+ *  20 — Recent HR activity (L3/L6/L10)            (HR_WEIGHTS.recentHR)
+ *   9 — Season SLG                                 (HR_WEIGHTS.seasonSLG)
+ *   9 — Matchup SLG vs pitcher hand                (HR_WEIGHTS.slgVsHand)
+ *   7 — Recent SLG last 10                         (HR_WEIGHTS.recentSLG)
+ *  11 — Barrel %                                   (HR_WEIGHTS.barrel)
+ *   6 — Hard Hit %                                 (HR_WEIGHTS.hardHit)
+ *   6 — Pitcher HR/9 vs batter hand (L/R split)   (HR_WEIGHTS.pitcherHR)
+ *   8 — xwOBA (expected weighted OBA)              (HR_WEIGHTS.xwOBA)
+ *   6 — Fly ball rate                              (HR_WEIGHTS.flyBall)
  *   3 — Park factor                                (HR_WEIGHTS.park)
  *   ~7 — Pull-side field distance                  [modifier]
  *   ~8 — Weather (wind toward pull side + temp)    [modifier]
@@ -555,28 +557,71 @@ export function calcHRScoreBreakdown(
     value: batter.hardHitPct !== undefined ? `${batter.hardHitPct.toFixed(1)}%` : "—",
   });
 
-  // 10. Pitcher HR allowed — season rate (0–HR_WEIGHTS.pitcherHR)
-  const W_PITCHER_HR = HR_WEIGHTS.pitcherHR; // 7
+  // 10. Pitcher HR/9 vs batter's hand (L/R split) — season data
+  const W_PITCHER_HR = HR_WEIGHTS.pitcherHR; // 6
   let pitcherHRScore = 0;
   if (pitcher) {
+    const hrP9ByHand =
+      batter.hand === "L" ? pitcher.hrPer9VsLeft :
+      batter.hand === "R" ? pitcher.hrPer9VsRight :
+      ((pitcher.hrPer9VsLeft ?? 0) + (pitcher.hrPer9VsRight ?? 0)) / 2;
+    // Fallback to raw L3 rate if splits unavailable
     const l3hr  = pitcher.last3HRAllowed    ?? 0;
     const l3ip  = pitcher.last3InningsPitched ?? 0;
     const szHR  = pitcher.seasonHRAllowed   ?? 0;
-    const hrPer9 = l3ip > 0
-      ? (l3hr / l3ip) * 9
-      : szHR > 0 ? szHR / 30 : 0;
+    const fallbackHrP9 = l3ip > 0 ? (l3hr / l3ip) * 9 : (szHR > 0 ? szHR / 30 : 0);
+    const hrPer9 = hrP9ByHand ?? fallbackHrP9;
     pitcherHRScore = clamp((hrPer9 / 2.0) * W_PITCHER_HR, W_PITCHER_HR);
     const hrTier =
       hrPer9 >= 1.8 ? "HR prone" :
       hrPer9 >= 1.2 ? "above avg" :
       hrPer9 >= 0.6 ? "average" : "suppresses HRs";
+    const handLabel = batter.hand === "L" ? "vs LHB" : batter.hand === "R" ? "vs RHB" : "overall";
     components.push({
-      label: "Pitcher HR Allowed",
+      label: `Pitcher HR/9 (${handLabel})`,
       earned: Math.round(pitcherHRScore),
       max: W_PITCHER_HR,
-      value: `${l3hr} in L3 starts — ${hrTier}`,
+      value: `${hrPer9.toFixed(2)} HR/9 — ${hrTier}`,
     });
   }
+
+  // 10b. xwOBA — expected weighted on-base average (0–HR_WEIGHTS.xwOBA)
+  const W_XWOBA = HR_WEIGHTS.xwOBA; // 8
+  let xwobaScore = 0;
+  if (batter.xwOBA !== undefined && batter.xwOBA > 0) {
+    // .270 = league avg, .400+ = elite power; scale linearly
+    xwobaScore = clamp(((batter.xwOBA - 0.270) / 0.130) * W_XWOBA, W_XWOBA);
+  }
+  const xwobaLabel =
+    (batter.xwOBA ?? 0) >= 0.380 ? "elite power" :
+    (batter.xwOBA ?? 0) >= 0.330 ? "above avg" :
+    (batter.xwOBA ?? 0) >= 0.290 ? "avg" : "below avg";
+  components.push({
+    label: "xwOBA",
+    earned: Math.round(xwobaScore),
+    max: W_XWOBA,
+    value: batter.xwOBA !== undefined ? `${batter.xwOBA.toFixed(3)} — ${xwobaLabel}` : "—",
+  });
+
+  // 10c. Fly ball rate (0–HR_WEIGHTS.flyBall)
+  const W_FLYBALL = HR_WEIGHTS.flyBall; // 6
+  let flyBallScore = 0;
+  if (batter.flyBallRate !== undefined && batter.flyBallRate > 0) {
+    // 0.30 = low FB, 0.55 = high FB tendency; 0.65+ = extreme fly ball hitter
+    flyBallScore = clamp(((batter.flyBallRate - 0.30) / 0.35) * W_FLYBALL, W_FLYBALL);
+  }
+  const fbTier =
+    (batter.flyBallRate ?? 0) >= 0.60 ? "high FB%" :
+    (batter.flyBallRate ?? 0) >= 0.50 ? "above avg FB%" :
+    (batter.flyBallRate ?? 0) >= 0.40 ? "avg FB%" : "ground ball tendency";
+  components.push({
+    label: "Fly Ball Rate",
+    earned: Math.round(flyBallScore),
+    max: W_FLYBALL,
+    value: batter.flyBallRate !== undefined
+      ? `${(batter.flyBallRate * 100).toFixed(0)}% — ${fbTier}`
+      : "—",
+  });
 
   // 11. H2H HR rate vs current pitcher (0–4, min 8 AB)
   let h2hScore = 0;
@@ -609,7 +654,8 @@ export function calcHRScoreBreakdown(
 
   const total = Math.min(100, Math.max(0, Math.round(
     recentHR + slg + matchup + park + pullScore + wxScore +
-    recentSlg + barrelScore + hardHitHRScore + pitcherHRScore + h2hScore + hrSlotMod
+    recentSlg + barrelScore + hardHitHRScore + pitcherHRScore +
+    xwobaScore + flyBallScore + h2hScore + hrSlotMod
   )));
 
   return { total, components };

@@ -1,5 +1,5 @@
 import type { DailySnapshot, MLBBatter, MLBGame, MLBPitcher } from "@/types/mlb";
-import { calcHitScore, getColdStreak } from "@/lib/scores";
+import { calcHitScore, calcHRScore, getColdStreak } from "@/lib/scores";
 
 export interface PitcherAnalyticsRow {
   id: number;
@@ -447,6 +447,81 @@ export function buildAiPicksRows(snapshot: DailySnapshot): AiPickRow[] {
   }
 
   return rows.sort((a, b) => b.hitScore - a.hitScore);
+}
+
+export interface BestSluggerRow {
+  id: number;
+  name: string;
+  team: string;
+  gamePk: number;
+  gameTime: string;
+  gameTimeIso: string;
+  hrScore: number;
+  slot: number;
+  // Batter power metrics
+  barrelPct: number | null;
+  hardHitPct: number | null;
+  xwOBA: number | null;
+  xSLG: number | null;
+  flyBallRate: number | null;
+  avgLaunchAngle: number | null;
+  // Pitcher HR context
+  pitcherName: string;
+  pitcherHand: "L" | "R";
+  pitcherERA: number;
+  pitcherHrP9Overall: number | null;
+  pitcherHrP9VsHand: number | null;   // HR/9 vs this batter's hand
+  pitcherSeasonHR: number;
+}
+
+/** All batters today ranked by HR score — for Best Sluggers analytics table */
+export function buildBestSluggersRows(snapshot: DailySnapshot): BestSluggerRow[] {
+  const rows: BestSluggerRow[] = [];
+
+  for (const game of snapshot.games) {
+    const pairs: [MLBBatter[], MLBPitcher | undefined][] = [
+      [game.awayLineup, game.homeStartingPitcher],
+      [game.homeLineup, game.awayStartingPitcher],
+    ];
+    for (const [lineup, pitcher] of pairs) {
+      for (const batter of lineup) {
+        const hrScore = calcHRScore(batter, pitcher, game.parkFactor);
+        const l3ip = pitcher?.last3InningsPitched ?? 0;
+        const l3hr = pitcher?.last3HRAllowed ?? 0;
+        const szHR = pitcher?.seasonHRAllowed ?? 0;
+        const hrP9Overall = l3ip > 0 ? (l3hr / l3ip) * 9 : (szHR > 0 ? szHR / 30 : null);
+        const hrP9VsHand =
+          batter.hand === "L" ? pitcher?.hrPer9VsLeft :
+          batter.hand === "R" ? pitcher?.hrPer9VsRight :
+          undefined;
+
+        rows.push({
+          id: batter.id,
+          name: batter.name,
+          team: batter.teamAbbreviation ?? "",
+          gamePk: game.gamePk,
+          gameTime: formatGameTime(game.gameDate),
+          gameTimeIso: game.gameDate,
+          hrScore,
+          slot: batter.battingOrder ?? 0,
+          barrelPct: batter.barrelPct ?? null,
+          hardHitPct: batter.hardHitPct ?? null,
+          xwOBA: batter.xwOBA ?? null,
+          xSLG: batter.xSLG ?? null,
+          flyBallRate: batter.flyBallRate ?? null,
+          avgLaunchAngle: batter.avgLaunchAngle ?? null,
+          pitcherName: pitcher?.name ?? "TBD",
+          pitcherHand: pitcher?.hand ?? "R",
+          pitcherERA: pitcher?.seasonERA ?? 0,
+          pitcherHrP9Overall: hrP9Overall,
+          pitcherHrP9VsHand: hrP9VsHand ?? null,
+          pitcherSeasonHR: pitcher?.seasonHRAllowed ?? 0,
+        });
+      }
+    }
+  }
+
+  return rows.sort((a, b) => b.hrScore - a.hrScore).slice(0, 50);
 }
 
 /** Top 10 hottest pitchers by ERA + K rate */

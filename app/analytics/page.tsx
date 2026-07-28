@@ -6,6 +6,7 @@ import {
   getHitConsistency,
   buildPitcherAnalyticsRows,
   buildAiPicksRows,
+  buildBestSluggersRows,
 } from "@/lib/analytics";
 import { getGameWeather, analyzeWindProfile } from "@/lib/weather";
 import { getParkData } from "@/lib/parkFactors";
@@ -14,6 +15,8 @@ import { HRChart } from "@/components/analytics/HRChart";
 import { PitchingAnalyticsTable } from "@/components/analytics/PitchingAnalyticsTable";
 import { HitConsistencyTable } from "@/components/analytics/HitConsistencyTable";
 import { AiPicksTable } from "@/components/analytics/AiPicksTable";
+import { BestSluggersTable } from "@/components/analytics/BestSluggersTable";
+import { CollapsibleSection } from "@/components/analytics/CollapsibleSection";
 import { ChefLoading } from "@/components/ChefLoading";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 
@@ -164,6 +167,7 @@ export default async function AnalyticsPage() {
   ]);
 
   const aiPicks = buildAiPicksRows(snapshot);
+  const bestSluggers = buildBestSluggersRows(snapshot);
 
   const allPitchers = buildPitcherAnalyticsRows([snapshot], today);
 
@@ -179,42 +183,49 @@ export default async function AnalyticsPage() {
       <Tabs defaultValue="ai-picks">
         <TabsList className="mb-6">
           <TabsTrigger value="ai-picks">AI Picks</TabsTrigger>
+          <TabsTrigger value="sluggers">Best Sluggers</TabsTrigger>
           <TabsTrigger value="hitters">Hitters Analytics</TabsTrigger>
           <TabsTrigger value="pitching">Pitching Analytics</TabsTrigger>
         </TabsList>
 
         {/* ── AI Picks Tab ── */}
         <TabsContent value="ai-picks">
-          <div className="space-y-4">
-            <div>
-              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-1">
-                Today&apos;s Best AI Picks
-              </h2>
-              <p className="text-xs text-muted-foreground mb-4">
-                Batters scoring ≥60 on the full hit model — weighted by consistency, matchup, pitcher H/9, streak, bounce-back &amp; lineup slot · sort by score, game time, or hit rate
-              </p>
-            </div>
-            <AiPicksTable data={aiPicks} />
+          <div className="space-y-6">
+            <CollapsibleSection
+              title="Today's Best AI Picks"
+              subtitle="Batters scoring ≥60 on the full hit model — weighted by consistency, matchup, pitcher H/9, streak, bounce-back & lineup slot · sort by score, game time, or hit rate"
+            >
+              <AiPicksTable data={aiPicks} />
+            </CollapsibleSection>
+          </div>
+        </TabsContent>
+
+        {/* ── Best Sluggers Tab ── */}
+        <TabsContent value="sluggers">
+          <div className="space-y-6">
+            <CollapsibleSection
+              title="Best Sluggers Today"
+              subtitle="Top 50 batters by HR score — Barrel%, Hard Hit%, xwOBA, xSLG, Fly Ball rate + pitcher HR/9 by hand · sort any column · green = favorable, red = unfavorable"
+            >
+              <BestSluggersTable data={bestSluggers} />
+            </CollapsibleSection>
           </div>
         </TabsContent>
 
         {/* ── Hitters Tab ── */}
         <TabsContent value="hitters">
           <div className="space-y-8">
-            <section>
-              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-1">
-                Ballpark HR Rankings Today
-              </h2>
-              <p className="text-xs text-muted-foreground mb-4">
-                Scored by park factor, wind direction, temperature, humidity & field dimensions · click to open game
-              </p>
+            <CollapsibleSection
+              title="Ballpark HR Rankings Today"
+              subtitle="Scored by park factor, wind direction, temperature, humidity & field dimensions · click to open game"
+            >
               <ParkHRRankingTable rows={parkRankings} />
-            </section>
+            </CollapsibleSection>
 
-            <section>
-              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-4">
-                Hottest HR Hitters
-              </h2>
+            <CollapsibleSection
+              title="Hottest HR Hitters"
+              subtitle="Most home runs in last 3 & 6 games"
+            >
               <HRChart
                 data={hotHR}
                 title="Hottest HR Hitters"
@@ -222,32 +233,26 @@ export default async function AnalyticsPage() {
                 icon="💣"
                 hot
               />
-            </section>
+            </CollapsibleSection>
 
-            <section>
-              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-1">
-                Season Hit Consistency
-              </h2>
-              <p className="text-xs text-muted-foreground mb-4">
-                Top 40 batters by hit rate across rolling windows · click name to open game · click headers to sort
-              </p>
+            <CollapsibleSection
+              title="Season Hit Consistency"
+              subtitle="Top 40 batters by hit rate across rolling windows · click name to open game · click headers to sort"
+            >
               <HitConsistencyTable data={hitConsistency} />
-            </section>
+            </CollapsibleSection>
           </div>
         </TabsContent>
 
         {/* ── Pitching Tab ── */}
         <TabsContent value="pitching">
-          <div className="space-y-4">
-            <div>
-              <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-widest mb-1">
-                Starting Pitcher Analytics
-              </h2>
-              <p className="text-xs text-muted-foreground mb-4">
-                All starters from recent games · ▶ = pitching today · HH% = hard hit rate allowed · sort & filter by any stat
-              </p>
-            </div>
-            <PitchingAnalyticsTable rows={allPitchers} />
+          <div className="space-y-6">
+            <CollapsibleSection
+              title="Starting Pitcher Analytics"
+              subtitle="All starters from recent games · ▶ = pitching today · HH% = hard hit rate allowed · sort & filter by any stat"
+            >
+              <PitchingAnalyticsTable rows={allPitchers} />
+            </CollapsibleSection>
           </div>
         </TabsContent>
       </Tabs>

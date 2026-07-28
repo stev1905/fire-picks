@@ -58,6 +58,9 @@ export interface MLBPitcher {
   // Pitcher splits — batting avg allowed vs left/right-handed batters (season)
   baaVsLeft?: number;
   baaVsRight?: number;
+  // HR rate allowed per 9 innings vs each hand (from MLB splits API)
+  hrPer9VsLeft?: number;
+  hrPer9VsRight?: number;
   // Per-zone pitch location profile (top 5 zones by frequency)
   zoneProfile?: PitcherZoneSlot[];
 }
@@ -115,8 +118,12 @@ export interface MLBBatter {
   gameLogCount?: number; // number of game log entries available (up to 40)
   // Statcast (Baseball Savant)
   xBA?: number;
+  xwOBA?: number;          // expected weighted on-base average (est_woba) — best composite power metric
+  xSLG?: number;           // expected SLG (est_slg) — "expected damage"
   barrelPct?: number;
   hardHitPct?: number;
+  avgLaunchAngle?: number; // avg launch angle — proxy for fly ball tendency
+  flyBallRate?: number;    // (fly balls + line drives) / total batted balls
   // Plate discipline (Baseball Savant)
   chasePct?: number;       // o-swing% — how often batter swings at pitches outside zone
   baVsFastball?: number;   // batting avg vs fastballs

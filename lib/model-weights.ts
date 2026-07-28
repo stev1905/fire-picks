@@ -48,19 +48,23 @@ export const HIT_WEIGHTS = {
 
 export const HR_WEIGHTS = {
   /** last3HR / last6HR / last10HR combined — recent HR activity (dominant predictor) */
-  recentHR: 22,
+  recentHR: 20,
   /** season SLG — baseline power */
-  seasonSLG: 12,
+  seasonSLG: 9,
   /** SLG vs pitcher hand — matchup power split */
-  slgVsHand: 11,
-  /** last10SLG — recent power form (r=0.252) */
-  recentSLG: 10,
-  /** barrelPct — Statcast barrel rate (r=0.106, highest Statcast predictor for HR) */
-  barrel: 12,
+  slgVsHand: 9,
+  /** last10SLG — recent power form */
+  recentSLG: 7,
+  /** barrelPct — Statcast barrel rate (highest Statcast predictor for HR) */
+  barrel: 11,
   /** hardHitPct — quality of contact */
-  hardHit: 8,
-  /** pitcher's HRs allowed — season rate & L3 starts */
-  pitcherHR: 7,
+  hardHit: 6,
+  /** pitcher's HRs allowed per 9 vs batter's hand (L/R) */
+  pitcherHR: 6,
+  /** xwOBA — expected weighted OBA; captures full power spectrum including doubles/HR */
+  xwOBA: 8,
+  /** flyBallRate — fly ball tendency (fbld / total batted balls); strong HR correlate */
+  flyBall: 6,
   /** park factor — binned park adjustment */
   park: 3,
 };

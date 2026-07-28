@@ -21,10 +21,19 @@ async function get<T>(path: string): Promise<T> {
 
 // ─── Baseball Savant (Statcast) ────────────────────────────────────────────────
 
-type StatcastEntry = { xBA: number; barrelPct: number; hardHitPct: number };
+type StatcastEntry = {
+  xBA: number;
+  xwOBA: number;
+  xSLG: number;
+  barrelPct: number;
+  hardHitPct: number;
+  avgLaunchAngle: number;
+  flyBallRate: number;
+};
 
 export async function fetchStatcastData(season: number): Promise<Map<number, StatcastEntry>> {
   const map = new Map<number, StatcastEntry>();
+  const empty = (): StatcastEntry => ({ xBA: 0, xwOBA: 0, xSLG: 0, barrelPct: 0, hardHitPct: 0, avgLaunchAngle: 0, flyBallRate: 0 });
   try {
     const [xbaRes, statcastRes] = await Promise.allSettled([
       fetch(
@@ -44,18 +53,23 @@ export async function fetchStatcastData(season: number): Promise<Map<number, Sta
       const text = await xbaRes.value.text();
       const lines = text.trim().split("\n");
       const header = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
-      const idIdx  = header.indexOf("player_id");
-      // try both known column names
-      const xbaIdx = header.indexOf("est_ba") >= 0 ? header.indexOf("est_ba") : header.indexOf("xba");
+      const idIdx    = header.indexOf("player_id");
+      const xbaIdx   = header.indexOf("est_ba") >= 0 ? header.indexOf("est_ba") : header.indexOf("xba");
+      const xwobaIdx = header.indexOf("est_woba");
+      const xslgIdx  = header.indexOf("est_slg");
       if (idIdx >= 0 && xbaIdx >= 0) {
         for (const line of lines.slice(1)) {
           const cols = line.split(",");
-          const id  = parseInt(parseCol(cols, idIdx));
-          const xBA = parseFloat(parseCol(cols, xbaIdx));
-          if (!isNaN(id) && !isNaN(xBA)) {
-            const prev = map.get(id) ?? { xBA: 0, barrelPct: 0, hardHitPct: 0 };
-            map.set(id, { ...prev, xBA });
-          }
+          const id   = parseInt(parseCol(cols, idIdx));
+          const xBA  = parseFloat(parseCol(cols, xbaIdx));
+          if (isNaN(id) || isNaN(xBA)) continue;
+          const prev = map.get(id) ?? empty();
+          map.set(id, {
+            ...prev,
+            xBA,
+            xwOBA: xwobaIdx >= 0 ? (parseFloat(parseCol(cols, xwobaIdx)) || prev.xwOBA) : prev.xwOBA,
+            xSLG:  xslgIdx  >= 0 ? (parseFloat(parseCol(cols, xslgIdx))  || prev.xSLG)  : prev.xSLG,
+          });
         }
       }
     }
@@ -64,21 +78,30 @@ export async function fetchStatcastData(season: number): Promise<Map<number, Sta
       const text = await statcastRes.value.text();
       const lines = text.trim().split("\n");
       const header = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
-      const idIdx  = header.indexOf("player_id");
-      const brlIdx = header.indexOf("brl_percent") >= 0 ? header.indexOf("brl_percent") : header.indexOf("barrel_batted_rate");
-      const evIdx  = header.indexOf("ev95percent") >= 0 ? header.indexOf("ev95percent") : header.indexOf("hard_hit_percent");
+      const idIdx    = header.indexOf("player_id");
+      const brlIdx   = header.indexOf("brl_percent") >= 0 ? header.indexOf("brl_percent") : header.indexOf("barrel_batted_rate");
+      const evIdx    = header.indexOf("ev95percent") >= 0 ? header.indexOf("ev95percent") : header.indexOf("hard_hit_percent");
+      const laIdx    = header.indexOf("avg_hit_angle");
+      const fbldIdx  = header.indexOf("fbld");
+      const gbIdx    = header.indexOf("gb");
       if (idIdx >= 0) {
         for (const line of lines.slice(1)) {
           const cols = line.split(",");
           const id = parseInt(parseCol(cols, idIdx));
           if (isNaN(id)) continue;
-          const barrelPct  = brlIdx >= 0 ? parseFloat(parseCol(cols, brlIdx))  : NaN;
-          const hardHitPct = evIdx  >= 0 ? parseFloat(parseCol(cols, evIdx))   : NaN;
-          const prev = map.get(id) ?? { xBA: 0, barrelPct: 0, hardHitPct: 0 };
+          const barrelPct      = brlIdx  >= 0 ? parseFloat(parseCol(cols, brlIdx))  : NaN;
+          const hardHitPct     = evIdx   >= 0 ? parseFloat(parseCol(cols, evIdx))   : NaN;
+          const avgLaunchAngle = laIdx   >= 0 ? parseFloat(parseCol(cols, laIdx))   : NaN;
+          const fbld           = fbldIdx >= 0 ? parseFloat(parseCol(cols, fbldIdx)) : NaN;
+          const gb             = gbIdx   >= 0 ? parseFloat(parseCol(cols, gbIdx))   : NaN;
+          const flyBallRate    = !isNaN(fbld) && !isNaN(gb) && (fbld + gb) > 0 ? fbld / (fbld + gb) : NaN;
+          const prev = map.get(id) ?? empty();
           map.set(id, {
             ...prev,
-            barrelPct:  isNaN(barrelPct)  ? prev.barrelPct  : barrelPct,
-            hardHitPct: isNaN(hardHitPct) ? prev.hardHitPct : hardHitPct,
+            barrelPct:      isNaN(barrelPct)      ? prev.barrelPct      : barrelPct,
+            hardHitPct:     isNaN(hardHitPct)     ? prev.hardHitPct     : hardHitPct,
+            avgLaunchAngle: isNaN(avgLaunchAngle) ? prev.avgLaunchAngle : avgLaunchAngle,
+            flyBallRate:    isNaN(flyBallRate)     ? prev.flyBallRate    : flyBallRate,
           });
         }
       }
@@ -712,16 +735,25 @@ export async function fetchPitcherStats(playerId: number, season: number): Promi
     }
     const last3HRAllowed = last3Starts.reduce((s, g) => s + ((g as any).hr || 0), 0);
 
-    // Pitcher BAA splits vs left/right-handed batters
+    // Pitcher splits vs left/right-handed batters — BAA and HR/9
     let baaVsLeft: number | undefined;
     let baaVsRight: number | undefined;
+    let hrPer9VsLeft: number | undefined;
+    let hrPer9VsRight: number | undefined;
     if (splitsRes.status === "fulfilled") {
       const splitRows: any[] = splitsRes.value.stats?.[0]?.splits ?? [];
       for (const row of splitRows) {
-        const avg = parseFloat(row.stat?.avg ?? "0");
-        if (!avg) continue;
-        if (row.split?.code === "vl") baaVsLeft  = avg;
-        if (row.split?.code === "vr") baaVsRight = avg;
+        const stat = row.stat ?? {};
+        const avg = parseFloat(stat.avg ?? "0");
+        const hrP9 = parseFloat(stat.homeRunsPer9 ?? "0");
+        if (row.split?.code === "vl") {
+          if (avg)  baaVsLeft     = avg;
+          if (hrP9) hrPer9VsLeft  = hrP9;
+        }
+        if (row.split?.code === "vr") {
+          if (avg)  baaVsRight    = avg;
+          if (hrP9) hrPer9VsRight = hrP9;
+        }
       }
     }
 
@@ -737,6 +769,8 @@ export async function fetchPitcherStats(playerId: number, season: number): Promi
       last3HRAllowed,
       baaVsLeft,
       baaVsRight,
+      hrPer9VsLeft,
+      hrPer9VsRight,
     };
   } catch {
     return {};
