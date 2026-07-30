@@ -10,7 +10,7 @@
  *  3. False positive/negative deep dive
  *  4. Streak and momentum analysis
  *  5. Pitcher hittability (H/9 normalized, not raw hits)
- *  6. Proposed weight changes — simulated calibration improvement
+ *  6. False positive deep dive — PROD vs experimental alternatives
  *  7. Weekly trend — are we getting better or worse over time?
  */
 
@@ -21,20 +21,22 @@ const sb = createClient(
   "sb_publishable_8_pzcyPHYW3FIDJ1d0oKQQ_F2sGq6Ek"
 );
 
-// ── Current production weights (must match lib/model-weights.ts) ──────────────
-const WEIGHTS_V1 = {
-  form:        3,
+// ── Actual current production weights — MUST mirror lib/model-weights.ts exactly.
+// (These are duplicated here, not imported, because this script runs under plain
+// node while lib/model-weights.ts is TypeScript. Keep in sync by hand.)
+const WEIGHTS_PROD = {
+  form:        2,
   consistency: 9,
   vsHand:      23,
-  homeAway:    1,
-  streak:      10,
-  xBA:         1,
+  homeAway:    4,
+  streak:      7,
+  xBA:         4,
   hardHit:     2,
   pitcherH:    25,
-  h2h:         11,
+  h2h:         9,
 };
 
-// ── Proposed improved weights V2 (aggressive rebalance — for comparison) ──────
+// ── Experimental alternative V2 (aggressive rebalance — for comparison) ───────
 // pitcherH reduced heavily — turns out to hurt calibration
 const WEIGHTS_V2 = {
   form:        3,
@@ -48,16 +50,12 @@ const WEIGHTS_V2 = {
   h2h:         10,
 };
 
-// ── Proposed improved weights V3 (targeted, conservative) ─────────────────────
-// Key changes:
-//  homeAway:  1 →  8  (+7)  — r=0.109, clear 9.8pp spread; underweighted vs signal
-//  xBA:       1 →  4  (+3)  — r=0.058, 100% coverage, costs nothing to upweight
-//  hardHit:   2 →  3  (+1)  — small quality-of-contact boost
-//  streak:   10 →  7  (-3)  — non-linear; effect flattens below streak=5
-//  vsHand:   23 → 21  (-2)  — slight trim, still top predictor
-//  form:      3 →  2  (-1)  — near-useless (r=0.01-0.03)
-//  pitcherH: 25 → 24  (-1)  — keep dominant weight, tiny trim
-//  h2h:      11 →  7  (-4)  — strong when available (r=0.134), 36.4% coverage
+// ── Experimental alternative V3 — tested 2026-07-29, NOT adopted ──────────────
+// Hypothesis was: h2hAVG/homeAvg/pitcherH correlations (r=0.12-0.13) now edge out
+// vsHand (r=0.107) despite vsHand holding the largest weight by far, so trimming
+// vsHand and boosting homeAway/h2h should help. Full-replay backtest showed it
+// does NOT beat WEIGHTS_PROD (score>=70 hit rate 72.4% vs 73.5%, spread 34.8pp vs
+// 35.3pp) — kept here as a documented dead end, not a recommendation.
 const WEIGHTS_V3 = {
   form:        2,
   consistency: 9,
@@ -74,7 +72,7 @@ function verifyWeights(w, name) {
   const sum = Object.values(w).reduce((a, b) => a + b, 0);
   if (sum !== 85) console.warn(`[WARN] ${name} weights sum to ${sum}, expected 85`);
 }
-verifyWeights(WEIGHTS_V1, "V1");
+verifyWeights(WEIGHTS_PROD, "PROD");
 verifyWeights(WEIGHTS_V2, "V2");
 verifyWeights(WEIGHTS_V3, "V3");
 
@@ -264,7 +262,7 @@ for (const row of rows) {
         const gotHit = (todayGame.hits ?? 0) > 0;
         batter.isHome = isHome;
 
-        const v1 = calcScore(batter, pitcher, game.parkFactor ?? 1.0, date, WEIGHTS_V1);
+        const prod = calcScore(batter, pitcher, game.parkFactor ?? 1.0, date, WEIGHTS_PROD);
         const v2 = calcScore(batter, pitcher, game.parkFactor ?? 1.0, date, WEIGHTS_V2);
         const v3 = calcScore(batter, pitcher, game.parkFactor ?? 1.0, date, WEIGHTS_V3);
 
@@ -275,12 +273,12 @@ for (const row of rows) {
           gotHit,
           atBats: todayGame.atBats,
           hits:   todayGame.hits,
-          v1:     v1.total,
+          prod:   prod.total,
           v2:     v2.total,
           v3:     v3.total,
-          streak: v1.hittingStreak,
-          cold:   v1.coldStreak,
-          h9:     v1.h9,
+          streak: prod.hittingStreak,
+          cold:   prod.coldStreak,
+          h9:     prod.h9,
           homeAvg: batter.isHome ? (batter.homeAVG ?? null) : (batter.awayAVG ?? null),
           avgVsHand: pitcher
             ? (pitcher.hand === "L" ? batter.avgVsLeft : batter.avgVsRight)
@@ -297,7 +295,7 @@ console.log(`Total batter-game observations: ${obs.length}`);
 const hits = obs.filter(o => o.gotHit).length;
 console.log(`Overall hit rate (baseline): ${hits}/${obs.length} = ${pct(hits, obs.length)}\n`);
 
-// ── 1. Score calibration — V1 vs V2 ──────────────────────────────────────────
+// ── 1. Score calibration — PROD vs V2/V3 experiments ─────────────────────────
 function calibration(field, label) {
   console.log(`\n  ${label}:`);
   const bands = [
@@ -332,9 +330,9 @@ function calibration(field, label) {
 console.log("═══════════════════════════════════════════════════════════════");
 console.log(" 1. SCORE CALIBRATION");
 console.log("═══════════════════════════════════════════════════════════════");
-calibration("v1", "Current weights (V1)");
+calibration("prod", "Current production weights (PROD)");
 calibration("v2", "Aggressive V2 (reduced pitcherH, for comparison)");
-calibration("v3", "Targeted V3 (recommended changes)");
+calibration("v3", "Targeted V3 (tested, not adopted — see comment above)");
 
 // ── 2. Feature correlation with actual hit outcome ─────────────────────────────
 console.log("\n═══════════════════════════════════════════════════════════════");
@@ -353,12 +351,12 @@ function pbr(vals, outs) {
 }
 
 const features = [
-  { key: "avgVsHand", label: "avgVsHand (vsHand  weight=23)" },
-  { key: "homeAvg",   label: "homeAvg   (homeAway weight=1→8, V3 change)" },
-  { key: "h2hAVG",    label: "h2hAVG    (h2h     weight=11→7, 36.4% coverage)" },
-  { key: "xBA",       label: "xBA       (xBA     weight=1→4, V3 change)" },
-  { key: "streak",    label: "hittingStreak (streak weight=10→7)" },
-  { key: "h9",        label: "pitcher H/9  (pitcherH weight=25→19)" },
+  { key: "avgVsHand", label: "avgVsHand     (vsHand    weight=23)" },
+  { key: "homeAvg",   label: "homeAvg       (homeAway  weight=4)" },
+  { key: "h2hAVG",    label: "h2hAVG        (h2h       weight=9, coverage ~36%)" },
+  { key: "xBA",       label: "xBA           (xBA       weight=4)" },
+  { key: "streak",    label: "hittingStreak (streak    weight=7)" },
+  { key: "h9",        label: "pitcher H/9   (pitcherH  weight=25)" },
 ];
 
 for (const f of features) {
@@ -377,7 +375,7 @@ for (const f of features) {
 
 // ── 3. Home/Away deep dive (key finding) ─────────────────────────────────────
 console.log("\n═══════════════════════════════════════════════════════════════");
-console.log(" 3. HOME/AWAY SPLIT — the most underweighted feature (weight 1 → 10)");
+console.log(" 3. HOME/AWAY SPLIT (weight currently 4 in production)");
 console.log("═══════════════════════════════════════════════════════════════");
 
 const haBands = [
@@ -392,10 +390,10 @@ for (const b of haBands) {
   const subset = obs.filter(o => b.filter(o.homeAvg));
   if (subset.length < 10) continue;
   const h = subset.filter(o => o.gotHit).length;
-  const v1Avg = subset.reduce((a, o) => a + o.v1, 0) / subset.length;
+  const prodAvg = subset.reduce((a, o) => a + o.prod, 0) / subset.length;
   const v2Avg = subset.reduce((a, o) => a + o.v2, 0) / subset.length;
   console.log(`  ${b.l.padEnd(22)} hit ${pct(h, subset.length).padStart(6)}  ` +
-    `avg score V1=${v1Avg.toFixed(0).padStart(2)}  V2=${v2Avg.toFixed(0).padStart(2)}  (n=${subset.length})`);
+    `avg score PROD=${prodAvg.toFixed(0).padStart(2)}  V2=${v2Avg.toFixed(0).padStart(2)}  (n=${subset.length})`);
 }
 
 // ── 4. Pitcher hittability (H/9 normalized — correct version) ────────────────
@@ -440,22 +438,22 @@ for (let c = 0; c <= 8; c++) {
   console.log(`    Cold  ${String(c).padEnd(2)}  ${pct(h, subset.length).padStart(6)}  (n=${subset.length})`);
 }
 
-// ── 6. False positives — V1 vs V2 ────────────────────────────────────────────
+// ── 6. False positives — PROD vs V3 ──────────────────────────────────────────
 console.log("\n═══════════════════════════════════════════════════════════════");
 console.log(" 6. FALSE POSITIVES — score ≥ 70 but no hit");
 console.log("═══════════════════════════════════════════════════════════════");
 
-const fpV1 = obs.filter(o => o.v1 >= 70 && !o.gotHit);
+const fpProd = obs.filter(o => o.prod >= 70 && !o.gotHit);
 const fpV3 = obs.filter(o => o.v3 >= 70 && !o.gotHit);
-const highV1 = obs.filter(o => o.v1 >= 70);
+const highProd = obs.filter(o => o.prod >= 70);
 const highV3 = obs.filter(o => o.v3 >= 70);
-console.log(`  V1: ${fpV1.length} false positives out of ${highV1.length} high-score picks (${pct(fpV1.length, highV1.length)} FP rate)`);
-console.log(`  V3: ${fpV3.length} false positives out of ${highV3.length} high-score picks (${pct(fpV3.length, highV3.length)} FP rate)`);
-console.log("\n  Top 15 V1 high-score no-hit days (most costly false positives):");
-console.log("  V1   V3   Name                       vsHand  homeAvg  xBA    Streak  H9");
-for (const o of fpV1.sort((a,b) => b.v1 - a.v1).slice(0, 15)) {
+console.log(`  PROD: ${fpProd.length} false positives out of ${highProd.length} high-score picks (${pct(fpProd.length, highProd.length)} FP rate)`);
+console.log(`  V3:   ${fpV3.length} false positives out of ${highV3.length} high-score picks (${pct(fpV3.length, highV3.length)} FP rate)`);
+console.log("\n  Top 15 PROD high-score no-hit days (most costly false positives):");
+console.log("  PROD V3   Name                       vsHand  homeAvg  xBA    Streak  H9");
+for (const o of fpProd.sort((a,b) => b.prod - a.prod).slice(0, 15)) {
   console.log(
-    `  ${String(o.v1).padEnd(4)} ${String(o.v3).padEnd(4)} ${o.name.padEnd(26)} ` +
+    `  ${String(o.prod).padEnd(4)} ${String(o.v3).padEnd(4)} ${o.name.padEnd(26)} ` +
     `${fmt3(o.avgVsHand)}   ${fmt3(o.homeAvg)}   ${fmt3(o.xBA)}  ` +
     `${String(o.streak).padEnd(7)} ${o.h9 !== null ? o.h9.toFixed(1) : "—"}`
   );
@@ -484,44 +482,38 @@ for (const w of weeks) {
   });
   if (subset.length < 20) continue;
   const h = subset.filter(o => o.gotHit).length;
-  const avgV1 = subset.reduce((a, o) => a + o.v1, 0) / subset.length;
-  const highScoreHit = subset.filter(o => o.v1 >= 60 && o.gotHit).length;
-  const highScoreAll = subset.filter(o => o.v1 >= 60).length;
+  const avgProd = subset.reduce((a, o) => a + o.prod, 0) / subset.length;
+  const highScoreHit = subset.filter(o => o.prod >= 60 && o.gotHit).length;
+  const highScoreAll = subset.filter(o => o.prod >= 60).length;
   console.log(
     `  Week ${w}  ${pct(h, subset.length).padStart(6)} hit rate  ` +
-    `avg score=${avgV1.toFixed(0).padStart(2)}  ` +
+    `avg score=${avgProd.toFixed(0).padStart(2)}  ` +
     `score≥60: ${pct(highScoreHit, highScoreAll).padStart(6)} (n=${highScoreAll})`
   );
 }
 
 // ── 8. Summary ────────────────────────────────────────────────────────────────
 console.log("\n═══════════════════════════════════════════════════════════════");
-console.log(" 8. SUMMARY & IMPROVEMENT ROADMAP");
+console.log(" 8. SUMMARY");
 console.log("═══════════════════════════════════════════════════════════════");
 
-const pick60V1 = obs.filter(o => o.v1 >= 60), hit60V1 = pick60V1.filter(o => o.gotHit).length;
+const pick60Prod = obs.filter(o => o.prod >= 60), hit60Prod = pick60Prod.filter(o => o.gotHit).length;
 const pick60V2 = obs.filter(o => o.v2 >= 60), hit60V2 = pick60V2.filter(o => o.gotHit).length;
 const pick60V3 = obs.filter(o => o.v3 >= 60), hit60V3 = pick60V3.filter(o => o.gotHit).length;
-const pick70V1 = obs.filter(o => o.v1 >= 70), hit70V1 = pick70V1.filter(o => o.gotHit).length;
+const pick70Prod = obs.filter(o => o.prod >= 70), hit70Prod = pick70Prod.filter(o => o.gotHit).length;
 const pick70V2 = obs.filter(o => o.v2 >= 70), hit70V2 = pick70V2.filter(o => o.gotHit).length;
 const pick70V3 = obs.filter(o => o.v3 >= 70), hit70V3 = pick70V3.filter(o => o.gotHit).length;
 
-console.log("\n  Version comparison (V1=current, V2=aggressive rebalance, V3=targeted):");
-console.log(`  Score ≥ 60: V1 ${pct(hit60V1, pick60V1.length).padStart(6)} (n=${pick60V1.length})  |  V2 ${pct(hit60V2, pick60V2.length).padStart(6)} (n=${pick60V2.length})  |  V3 ${pct(hit60V3, pick60V3.length).padStart(6)} (n=${pick60V3.length})`);
-console.log(`  Score ≥ 70: V1 ${pct(hit70V1, pick70V1.length).padStart(6)} (n=${pick70V1.length})  |  V2 ${pct(hit70V2, pick70V2.length).padStart(6)} (n=${pick70V2.length})  |  V3 ${pct(hit70V3, pick70V3.length).padStart(6)} (n=${pick70V3.length})`);
+console.log("\n  Version comparison (PROD=live production weights, V2/V3=experimental alternatives):");
+console.log(`  Score ≥ 60: PROD ${pct(hit60Prod, pick60Prod.length).padStart(6)} (n=${pick60Prod.length})  |  V2 ${pct(hit60V2, pick60V2.length).padStart(6)} (n=${pick60V2.length})  |  V3 ${pct(hit60V3, pick60V3.length).padStart(6)} (n=${pick60V3.length})`);
+console.log(`  Score ≥ 70: PROD ${pct(hit70Prod, pick70Prod.length).padStart(6)} (n=${pick70Prod.length})  |  V2 ${pct(hit70V2, pick70V2.length).padStart(6)} (n=${pick70V2.length})  |  V3 ${pct(hit70V3, pick70V3.length).padStart(6)} (n=${pick70V3.length})`);
 
 console.log(`
-  Recommended V3 weight changes vs current V1:
-  homeAway:  1 →  8  (+7)  r=0.109, 9.8pp empirical spread; was effectively ignored
-  xBA:       1 →  4  (+3)  r=0.058, 100% coverage — decent signal with no data cost
-  hardHit:   2 →  3  (+1)  small quality-of-contact boost
-  streak:   10 →  7  (-3)  signal flattens below streak=5; logarithmic curve already helps
-  vsHand:   23 → 21  (-2)  still top predictor, slight trim to make room
-  form:      3 →  2  (-1)  r=0.01-0.03, near-useless feature
-  pitcherH: 25 → 24  (-1)  keep dominant weight (22pp H/9 spread confirmed)
-  h2h:      11 →  7  (-4)  strong signal (r=0.134) but 36.4% coverage limits impact
-  consistency: 9 unchanged
-  All sums = 85.
+  No weight changes currently recommended. WEIGHTS_PROD already reflects the last
+  round of tuning (homeAway/xBA raised, streak/form trimmed) and calibrates well:
+  monotonic score bands, ~35pp spread top-to-bottom, ~73% hit rate on score≥70 picks.
+  V2 and V3 are kept only as tested-and-rejected alternatives — re-run this backtest
+  periodically since correlations drift as the season progresses.
 `);
 
 console.log("Done.\n");
