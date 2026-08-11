@@ -1,5 +1,5 @@
 import type { DailySnapshot, MLBBatter, MLBGame, MLBPitcher } from "@/types/mlb";
-import { calcHitScore, calcHRScore, getColdStreak } from "@/lib/scores";
+import { calcHitScore, calcHRScore, getColdStreak, calcProjectedStrikeouts } from "@/lib/scores";
 
 export interface PitcherAnalyticsRow {
   id: number;
@@ -26,6 +26,7 @@ export interface PitcherAnalyticsRow {
   fastballPct?: number;
   breakingPct?: number;
   offspeedPct?: number;
+  projectedK: number | null; // estimated strikeouts for their next/today's start (see calcProjectedStrikeouts)
 }
 
 export function buildPitcherAnalyticsRows(
@@ -53,6 +54,7 @@ export function buildPitcherAnalyticsRows(
     const starts = Math.max(p.last3Starts?.length ?? 0, 1);
     const isToday = todayPitcherIds.has(p.id);
     const todayCtx = todayGameMap.get(p.id);
+    const kProjection = calcProjectedStrikeouts(p);
     return {
       id: p.id,
       name: p.name,
@@ -78,6 +80,7 @@ export function buildPitcherAnalyticsRows(
       fastballPct: p.fastballPct,
       breakingPct: p.breakingPct,
       offspeedPct: p.offspeedPct,
+      projectedK: kProjection.k9 !== null ? kProjection.projected : null,
     };
   };
 

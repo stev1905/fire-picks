@@ -7,7 +7,7 @@ import type { PitcherAnalyticsRow } from "@/lib/analytics";
 type SortKey =
   | "name" | "team" | "hand" | "l3Hits" | "l6Hits" | "l9Hits"
   | "avgH" | "era" | "l3ERA" | "hardHit" | "barrel" | "xba"
-  | "whiff" | "kPct" | "l3HR" | "seasonHR";
+  | "whiff" | "kPct" | "projK" | "l3HR" | "seasonHR";
 
 type Dir = "asc" | "desc";
 
@@ -26,6 +26,7 @@ const COLS: { key: SortKey; label: string; title?: string }[] = [
   { key: "xba",      label: "xBA",   title: "Expected batting average against (season)" },
   { key: "whiff",    label: "Whiff%",title: "Whiff rate induced (weighted across pitch types)" },
   { key: "kPct",     label: "K%",    title: "Strikeout rate (weighted across pitch types)" },
+  { key: "projK",    label: "Proj K",title: "Projected strikeouts for their next/today's start — own K/9 (recent, falling back to season) × recent innings/start, adjusted for the opponent's strikeout rate when known" },
   { key: "l3HR",     label: "L3 HR", title: "Home runs allowed in last 3 starts" },
   { key: "seasonHR", label: "Szn HR",title: "Season home runs allowed" },
 ];
@@ -46,6 +47,7 @@ function getValue(row: PitcherAnalyticsRow, key: SortKey): number | string {
     case "xba":      return row.xBAAgainst ?? -1;
     case "whiff":    return row.whiffPct ?? -1;
     case "kPct":     return row.kPct ?? -1;
+    case "projK":    return row.projectedK ?? -1;
     case "l3HR":     return row.last3HRAllowed;
     case "seasonHR": return row.seasonHRAllowed;
     default:         return 0;
@@ -202,7 +204,7 @@ export function PitchingAnalyticsTable({ rows: initialRows }: { rows: PitcherAna
       {/* Table */}
       <div className="rounded-xl border border-border bg-card overflow-x-auto">
         {/* Header */}
-        <div className="grid grid-cols-[180px_72px_48px_56px_56px_56px_60px_60px_64px_60px_56px_56px_62px_56px_52px_60px] min-w-[1100px] gap-0 px-3 py-2 bg-muted/50 border-b border-border">
+        <div className="grid grid-cols-[180px_72px_48px_56px_56px_56px_60px_60px_64px_60px_56px_56px_62px_56px_60px_52px_60px] min-w-[1160px] gap-0 px-3 py-2 bg-muted/50 border-b border-border">
           {COLS.map((col) => (
             <button
               key={col.key}
@@ -222,7 +224,7 @@ export function PitchingAnalyticsTable({ rows: initialRows }: { rows: PitcherAna
             return (
               <div
                 key={p.id}
-                className={`grid grid-cols-[180px_72px_48px_56px_56px_56px_60px_60px_64px_60px_56px_56px_62px_56px_52px_60px] min-w-[1100px] gap-0 px-3 py-2.5 items-center transition-colors hover:bg-muted/30 ${isToday ? "bg-amber-500/5 border-l-2 border-l-amber-500" : ""}`}
+                className={`grid grid-cols-[180px_72px_48px_56px_56px_56px_60px_60px_64px_60px_56px_56px_62px_56px_60px_52px_60px] min-w-[1160px] gap-0 px-3 py-2.5 items-center transition-colors hover:bg-muted/30 ${isToday ? "bg-amber-500/5 border-l-2 border-l-amber-500" : ""}`}
               >
                 {/* Pitcher name */}
                 <div className="flex items-center gap-1.5 min-w-0 pr-2">
@@ -303,6 +305,10 @@ export function PitchingAnalyticsTable({ rows: initialRows }: { rows: PitcherAna
                 <div className="text-center text-sm tabular-nums text-muted-foreground">
                   {fmtPct(p.kPct)}
                 </div>
+                {/* Projected K */}
+                <div className={`text-center text-sm tabular-nums font-semibold ${p.projectedK != null && p.projectedK >= 6 ? "text-red-500 dark:text-red-400" : p.projectedK != null && p.projectedK >= 4 ? "text-yellow-500 dark:text-yellow-400" : "text-muted-foreground"}`}>
+                  {p.projectedK != null ? p.projectedK.toFixed(1) : <span className="text-muted-foreground/40">—</span>}
+                </div>
                 {/* L3 HR */}
                 <div className={`text-center text-sm tabular-nums ${(p.last3HRAllowed >= 3) ? "text-red-500" : (p.last3HRAllowed >= 1) ? "text-amber-500" : "text-muted-foreground"}`}>
                   {p.last3HRAllowed}
@@ -318,7 +324,7 @@ export function PitchingAnalyticsTable({ rows: initialRows }: { rows: PitcherAna
       </div>
 
       <p className="text-[10px] text-muted-foreground ml-1">
-        ▶ = starting today · HH% = opponent hard hit rate · Brl% = barrel rate allowed · xBA = expected BA against · Whiff% = whiff rate induced · click headers to sort
+        ▶ = starting today · HH% = opponent hard hit rate · Brl% = barrel rate allowed · xBA = expected BA against · Whiff% = whiff rate induced · Proj K = estimated strikeouts for their next/today's start · click headers to sort
       </p>
     </div>
   );
