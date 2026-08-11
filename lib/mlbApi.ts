@@ -740,7 +740,8 @@ export async function fetchPitcherStats(playerId: number, season: number): Promi
 
     let last3ERA = 0, last6ERA = 0;
     let last3HitsAllowed = 0, last6HitsAllowed = 0, last9HitsAllowed = 0;
-    let last3Strikeouts = 0, last3InningsPitched = 0;
+    let last3Strikeouts = 0, last6Strikeouts = 0, last9Strikeouts = 0;
+    let last3InningsPitched = 0, last9InningsPitched = 0;
     let last3Starts: PitcherStart[] = [];
 
     if (gameLogRes.status === "fulfilled") {
@@ -779,17 +780,18 @@ export async function fetchPitcherStats(playerId: number, season: number): Promi
       const w9 = calcPitcherWindow(starts, 9);
       last3ERA = w3.era; last6ERA = w6.era;
       last3HitsAllowed = w3.hitsAllowed; last6HitsAllowed = w6.hitsAllowed; last9HitsAllowed = w9.hitsAllowed;
-      last3Strikeouts = w3.strikeouts;
-      last3InningsPitched = w3.inningsPitched;
+      last3Strikeouts = w3.strikeouts; last6Strikeouts = w6.strikeouts; last9Strikeouts = w9.strikeouts;
+      last3InningsPitched = w3.inningsPitched; last9InningsPitched = w9.inningsPitched;
     }
 
     let seasonHRAllowed = 0;
-    let seasonHitsAllowed = 0, seasonInningsPitched = 0;
+    let seasonHitsAllowed = 0, seasonInningsPitched = 0, seasonStrikeouts = 0;
     if (seasonRes.status === "fulfilled") {
       const s = seasonRes.value.stats?.[0]?.splits?.[0]?.stat ?? {};
       seasonHRAllowed = s.homeRuns ?? 0;
       seasonHitsAllowed = s.hits ?? 0;
       seasonInningsPitched = parseFloat(s.inningsPitched ?? "0");
+      seasonStrikeouts = s.strikeOuts ?? 0;
     }
     const last3HRAllowed = last3Starts.reduce((s, g) => s + ((g as any).hr || 0), 0);
 
@@ -820,12 +822,13 @@ export async function fetchPitcherStats(playerId: number, season: number): Promi
       seasonERA,
       last3ERA, last6ERA,
       last3HitsAllowed, last6HitsAllowed, last9HitsAllowed,
-      last3Strikeouts,
-      last3InningsPitched,
+      last3Strikeouts, last6Strikeouts, last9Strikeouts,
+      last3InningsPitched, last9InningsPitched,
       last3Starts,
       seasonHRAllowed,
       seasonHitsAllowed,
       seasonInningsPitched,
+      seasonStrikeouts,
       last3HRAllowed,
       baaVsLeft,
       baaVsRight,

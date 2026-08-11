@@ -29,6 +29,14 @@ function fmt(v: number) {
   return v.toFixed(3).replace(/^0/, "");
 }
 
+// Shared reliability bar for a pitcher's recent-outings sample — below this,
+// last3* numbers are too likely to be a bullpen game / spot start / opener
+// (a couple short relief innings) rather than real starts, and season-level
+// numbers should be trusted instead. Used by both the Hit Score's pitcher H/9
+// component and the strikeout projection below.
+const MIN_RELIABLE_RECENT_IP = 9;  // ~3 real starts worth
+const MIN_RELIABLE_SEASON_IP = 10;
+
 /** Returns a weather score (0–maxPts) and a readable label */
 function calcWeatherComponent(
   weather: WeatherData,
@@ -287,8 +295,6 @@ export function calcHitScoreBreakdown(
   //    reliable data either way — missing information shouldn't read as "worst
   //    pitcher in the league."
   const W_PITCHER_H = HIT_WEIGHTS.pitcherH; // 25
-  const MIN_RELIABLE_RECENT_IP = 9;  // ~3 real starts worth
-  const MIN_RELIABLE_SEASON_IP = 10;
   let pitcherScore = W_PITCHER_H / 2; // neutral default
   if (pitcher) {
     const recentReliable = pitcher.last3InningsPitched >= MIN_RELIABLE_RECENT_IP;
@@ -942,5 +948,53 @@ export function strikeoutRiskBadge(
     label: "K Risk",
     detail: `${pitcher.name.split(" ").slice(-1)[0]} ${kPct.toFixed(0)}% K vs a lineup striking out ${teamKPct.toFixed(0)}% lately`,
     color: "bg-red-600/85 text-white",
+  };
+}
+
+const LEAGUE_AVG_TEAM_K_PCT = 22; // rough MLB-average team strikeout rate
+const OPPONENT_K_ADJ_CAP = 0.15;  // cap the opponent-based nudge to ±15% either way
+const NEUTRAL_IP_PER_START = 5.5; // fallback expected innings when the recent sample is too thin to trust
+
+/**
+ * Projects how many strikeouts a starter is likely to record tonight — their
+ * own K/9 rate (recent, falling back to season using the same reliability
+ * bar as the Hit Score's pitcher H/9 component) times how deep they've been
+ * going lately, nudged up or down by how strikeout-prone tonight's opponent
+ * has been recently (capped so one team's small sample can't swing it too
+ * far). This is the "would this pitcher get 4+ Ks tonight" number.
+ */
+export function calcProjectedStrikeouts(pitcher: MLBPitcher): {
+  projected: number;
+  k9: number | null;
+  k9Source: "recent" | "season" | null;
+  avgIpPerStart: number;
+  opponentAdjPct: number; // e.g. +8 means the opponent nudged the projection up 8%
+} {
+  const recentReliable = pitcher.last3InningsPitched >= MIN_RELIABLE_RECENT_IP;
+  const seasonReliable = (pitcher.seasonInningsPitched ?? 0) >= MIN_RELIABLE_SEASON_IP;
+
+  let k9: number | null = null;
+  let k9Source: "recent" | "season" | null = null;
+  if (recentReliable) {
+    k9 = (pitcher.last3Strikeouts / pitcher.last3InningsPitched) * 9;
+    k9Source = "recent";
+  } else if (seasonReliable) {
+    k9 = (pitcher.seasonStrikeouts! / pitcher.seasonInningsPitched!) * 9;
+    k9Source = "season";
+  }
+
+  const avgIpPerStart = recentReliable ? pitcher.last3InningsPitched / 3 : NEUTRAL_IP_PER_START;
+  const baseProjected = k9 !== null ? (k9 * avgIpPerStart) / 9 : 0;
+
+  const opponentAdj = pitcher.opposingTeamKPct !== undefined
+    ? Math.min(1 + OPPONENT_K_ADJ_CAP, Math.max(1 - OPPONENT_K_ADJ_CAP, pitcher.opposingTeamKPct / LEAGUE_AVG_TEAM_K_PCT))
+    : 1;
+
+  return {
+    projected: Math.round(baseProjected * opponentAdj * 10) / 10,
+    k9: k9 !== null ? Math.round(k9 * 10) / 10 : null,
+    k9Source,
+    avgIpPerStart: Math.round(avgIpPerStart * 10) / 10,
+    opponentAdjPct: Math.round((opponentAdj - 1) * 100),
   };
 }

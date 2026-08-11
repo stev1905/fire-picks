@@ -55,12 +55,16 @@ export interface MLBPitcher {
   last3HitsAllowed: number;
   last6HitsAllowed: number;
   last3Strikeouts: number;
+  last6Strikeouts?: number;
+  last9Strikeouts?: number;
   last3InningsPitched: number;
+  last9InningsPitched?: number;
   last3Starts: PitcherStart[];
   teamAbbreviation?: string;
   seasonHRAllowed: number;
   seasonHitsAllowed?: number;     // full-season hits allowed — fallback when last3InningsPitched is too thin to trust (bullpen game, spot start, etc.)
   seasonInningsPitched?: number;  // full-season innings pitched — pairs with seasonHitsAllowed for a reliable season H/9
+  seasonStrikeouts?: number;      // full-season strikeouts — pairs with seasonInningsPitched for season K/9
   last3HRAllowed: number;
   last9HitsAllowed: number;
   // Pitch arsenal (Baseball Savant statcast_search)

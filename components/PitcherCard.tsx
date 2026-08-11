@@ -3,7 +3,7 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { MLBPitcher } from "@/types/mlb";
-import { pitcherSweetSpot, strikeoutRiskBadge } from "@/lib/scores";
+import { pitcherSweetSpot, strikeoutRiskBadge, calcProjectedStrikeouts } from "@/lib/scores";
 
 interface Props {
   pitcher: MLBPitcher;
@@ -29,6 +29,7 @@ function eraColor(era: number) {
 export function PitcherCard({ pitcher, role }: Props) {
   const sweetSpot = pitcherSweetSpot(pitcher);
   const kRisk = strikeoutRiskBadge(pitcher);
+  const kProjection = calcProjectedStrikeouts(pitcher);
 
   return (
     <Card>
@@ -82,6 +83,31 @@ export function PitcherCard({ pitcher, role }: Props) {
             <StatBox label="Last 3 Starts" value={String(pitcher.last3HitsAllowed)} />
             <StatBox label="Last 6 Starts" value={String(pitcher.last6HitsAllowed)} />
           </div>
+        </div>
+
+        <div>
+          <div className="text-xs text-muted-foreground mb-1.5 uppercase tracking-wide">Strikeouts</div>
+          <div className="grid grid-cols-3 gap-1.5">
+            <StatBox label="Season" value={String(pitcher.seasonStrikeouts ?? "—")} />
+            <StatBox label="Last 3" value={String(pitcher.last3Strikeouts)} />
+            <StatBox label="Last 6" value={String(pitcher.last6Strikeouts ?? "—")} />
+          </div>
+          {kProjection.k9 !== null && (
+            <div className="mt-2 flex items-center justify-between rounded-lg bg-muted px-2.5 py-1.5">
+              <div className="text-[10px] text-muted-foreground">
+                Projected tonight
+                <span className="opacity-70">
+                  {" "}({kProjection.k9Source === "recent" ? "L3" : "season"} K/9: {kProjection.k9.toFixed(1)}
+                  {kProjection.opponentAdjPct !== 0
+                    ? `, opp ${kProjection.opponentAdjPct > 0 ? "+" : ""}${kProjection.opponentAdjPct}%`
+                    : ""})
+                </span>
+              </div>
+              <div className={`font-mono font-bold text-sm ${kProjection.projected >= 6 ? "text-red-500 dark:text-red-400" : kProjection.projected >= 4 ? "text-yellow-500 dark:text-yellow-400" : ""}`}>
+                {kProjection.projected.toFixed(1)} K
+              </div>
+            </div>
+          )}
         </div>
 
         {pitcher.last3Starts.length > 0 && (
