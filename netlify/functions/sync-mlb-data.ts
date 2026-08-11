@@ -2,9 +2,9 @@ import type { Config } from "@netlify/functions";
 import { createClient } from "@supabase/supabase-js";
 import { buildDailySnapshot } from "../../lib/mlbApi";
 
-// Runs every 2 hours from 12pm–10pm EDT (16,18,20,22,0,2 UTC)
+// Runs every 2 hours from 10am–10pm EDT (14,16,18,20,22,0,2 UTC)
 export const config: Config = {
-  schedule: "0 16,18,20,22,0,2 * * *",
+  schedule: "0 14,16,18,20,22,0,2 * * *",
 };
 
 function supabase() {

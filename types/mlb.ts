@@ -20,11 +20,29 @@ export interface MLBTeam {
   logo?: string;
 }
 
-/** One slot in a pitcher's zone frequency profile (top 5 zones by pitch count) */
+/** One slot in a pitcher's zone frequency profile (every zone thrown to, most-frequent first) */
 export interface PitcherZoneSlot {
   zone: number;       // 1-9 = strike zone, 11-14 = chase zones
   pct: number;        // % of all season pitches thrown to this zone
+  pitches: number;    // total pitches thrown to this zone (season) — sample-size gate for xBA
   xBA: number | null; // avg xBA against when pitcher throws to this zone (null if no contact)
+}
+
+/**
+ * One exact pitch type from Baseball Savant's pitch-arsenal-stats leaderboard.
+ * For a pitcher: what they throw and how it performs. For a batter: how they
+ * perform against that exact pitch type. `pa` is the sample-size gate — never
+ * trust `ba`/`xba`/`whiff` on a pitch type without checking it first.
+ */
+export interface PitchArsenalEntry {
+  type: string;          // Savant pitch_type code: FF, SI, FC, SL, ST, CU, KC, CH, FS, ...
+  pitches: number;       // total pitches of this type
+  usage: number;         // % of all pitches (pitcher) — this pitch's share of the arsenal
+  pa: number;            // plate appearances ending on this pitch type — sample-size gate
+  ba?: number;           // batting average on this pitch type
+  xba?: number;          // expected BA (est_ba) on this pitch type
+  whiff?: number;        // whiff % on swings at this pitch type
+  runValue?: number;     // run_value_per_100 — Savant's quality grade for the pitch (pitcher-relevant; negative = bad for pitcher)
 }
 
 export interface MLBPitcher {
@@ -41,14 +59,14 @@ export interface MLBPitcher {
   last3Starts: PitcherStart[];
   teamAbbreviation?: string;
   seasonHRAllowed: number;
+  seasonHitsAllowed?: number;     // full-season hits allowed — fallback when last3InningsPitched is too thin to trust (bullpen game, spot start, etc.)
+  seasonInningsPitched?: number;  // full-season innings pitched — pairs with seasonHitsAllowed for a reliable season H/9
   last3HRAllowed: number;
   last9HitsAllowed: number;
   // Pitch arsenal (Baseball Savant statcast_search)
   fastballPct?: number;    // % fastballs thrown (FF + SI + FC)
   breakingPct?: number;    // % breaking balls (SL + CU + KC + CS)
   offspeedPct?: number;    // % offspeed (CH + FS)
-  zonePct?: number;
-  chaseInducePct?: number;
   // Pitcher contact stats allowed (derived from statcast_search)
   hardHitAllowedPct?: number;
   barrelAllowedPct?: number;
@@ -63,6 +81,11 @@ export interface MLBPitcher {
   hrPer9VsRight?: number;
   // Per-zone pitch location profile (top 5 zones by frequency)
   zoneProfile?: PitcherZoneSlot[];
+  // Exact pitch-type arsenal (Baseball Savant pitch-arsenal-stats), sample-gated via .pa
+  pitchArsenal?: PitchArsenalEntry[];
+  // Recent K% (last ~10 days) of the team this pitcher is facing today —
+  // pairs with kPct to flag a strikeout-pitcher-vs-strikeout-prone-team spot
+  opposingTeamKPct?: number;
 }
 
 export interface PitcherStart {
@@ -125,7 +148,6 @@ export interface MLBBatter {
   avgLaunchAngle?: number; // avg launch angle — proxy for fly ball tendency
   flyBallRate?: number;    // (fly balls + line drives) / total batted balls
   // Plate discipline (Baseball Savant)
-  chasePct?: number;       // o-swing% — how often batter swings at pitches outside zone
   baVsFastball?: number;   // batting avg vs fastballs
   baVsBreaking?: number;   // batting avg vs breaking balls
   whiffVsBreaking?: number; // whiff rate vs breaking balls
@@ -137,6 +159,8 @@ export interface MLBBatter {
   isHome?: boolean;  // true = batter's team is home in today's game
   // Per-zone contact profile (sorted by xBA desc — hot zones first)
   zoneProfile?: BatterZoneSlot[];
+  // Exact pitch-type performance (Baseball Savant pitch-arsenal-stats), sample-gated via .pa
+  pitchArsenal?: PitchArsenalEntry[];
   // Career head-to-head vs opposing pitcher
   vsCurrentPitcher?: {
     atBats: number;

@@ -5,6 +5,7 @@ import type { DailySnapshot, MLBGame } from "@/types/mlb";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { ChefLoading } from "@/components/ChefLoading";
+import { strikeoutRiskBadge } from "@/lib/scores";
 
 async function getSnapshot(): Promise<DailySnapshot | null> {
   try {
@@ -33,6 +34,8 @@ function GameCard({ game }: { game: MLBGame }) {
     timeZone: "America/New_York",
     timeZoneName: "short",
   });
+  const awayKRisk = game.awayStartingPitcher ? strikeoutRiskBadge(game.awayStartingPitcher) : null;
+  const homeKRisk = game.homeStartingPitcher ? strikeoutRiskBadge(game.homeStartingPitcher) : null;
 
   return (
     <Link href={`/game/${game.gamePk}`}>
@@ -76,6 +79,14 @@ function GameCard({ game }: { game: MLBGame }) {
                     </Badge>
                     <span className="text-muted-foreground">ERA {game.awayStartingPitcher.seasonERA.toFixed(2)}</span>
                   </div>
+                  {awayKRisk && (
+                    <span
+                      title={awayKRisk.detail}
+                      className={`inline-block mt-1 text-[9px] px-1.5 py-0.5 rounded-full font-medium ${awayKRisk.color}`}
+                    >
+                      {awayKRisk.label}
+                    </span>
+                  )}
                 </>
               ) : (
                 <div className="text-muted-foreground/50">TBD</div>
@@ -92,6 +103,14 @@ function GameCard({ game }: { game: MLBGame }) {
                     </Badge>
                     <span className="text-muted-foreground">ERA {game.homeStartingPitcher.seasonERA.toFixed(2)}</span>
                   </div>
+                  {homeKRisk && (
+                    <span
+                      title={homeKRisk.detail}
+                      className={`inline-block mt-1 text-[9px] px-1.5 py-0.5 rounded-full font-medium ${homeKRisk.color}`}
+                    >
+                      {homeKRisk.label}
+                    </span>
+                  )}
                 </>
               ) : (
                 <div className="text-muted-foreground/50">TBD</div>

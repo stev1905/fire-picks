@@ -4,10 +4,11 @@ import { buildDailySnapshot } from "../../lib/mlbApi";
 import { writeOutcomes } from "../../lib/outcomes";
 
 // Background function — no timeout limit (up to 15 min)
-// Runs every 2 hours from 12pm–10pm EDT (16,18,20,22,0,2 UTC)
-// Trigger manually: POST /.netlify/functions/sync-mlb-data-background
+// Runs every 2 hours from 10am–10pm EDT (14,16,18,20,22,0,2 UTC)
+// Scheduled functions can't be triggered via manual POST (Netlify returns 403) —
+// use the Netlify dashboard's "Trigger function" button or `netlify functions:invoke` instead.
 export const config: Config = {
-  schedule: "0 16,18,20,22,0,2 * * *",
+  schedule: "0 14,16,18,20,22,0,2 * * *",
 };
 
 function supabase() {

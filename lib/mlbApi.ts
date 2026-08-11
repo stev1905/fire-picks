@@ -7,6 +7,7 @@ import type {
   PitcherStart,
   PitcherZoneSlot,
   BatterZoneSlot,
+  PitchArsenalEntry,
   DailySnapshot,
 } from "@/types/mlb";
 import { getParkFactor } from "./parkFactors";
@@ -186,6 +187,7 @@ export async function fetchPitcherZoneStats(
     const lsaIdx    = idx("launch_speed_angle");
     const eventsIdx = idx("events");
     const abNumIdx  = idx("at_bat_number");
+    const gameDateIdx = idx("game_date");
 
     if (ptypeIdx < 0 || zoneIdx < 0) return {};
 
@@ -211,6 +213,7 @@ export async function fetchPitcherZoneStats(
       const lsaStr = cols[lsaIdx]?.trim()    ?? "";
       const events = cols[eventsIdx]?.trim() ?? "";
       const abNum  = cols[abNumIdx]?.trim()  ?? "";
+      const gameDate = cols[gameDateIdx]?.trim() ?? "";
 
       if (!ptype) continue;
       totalPitches++;
@@ -240,9 +243,14 @@ export async function fetchPitcherZoneStats(
         if (parseInt(lsaStr) === 6) barrels++;
       }
 
-      if (abNum) {
-        atBatNums.add(abNum);
-        if (events === "strikeout") strikeoutABs.add(abNum);
+      // at_bat_number resets to 1 at the start of every game, so it must be
+      // paired with game_date before going into a season-spanning Set —
+      // otherwise at-bat #1 from every start collapses into one entry,
+      // undercounting the denominator and badly inflating K%.
+      if (abNum && gameDate) {
+        const abKey = `${gameDate}:${abNum}`;
+        atBatNums.add(abKey);
+        if (events === "strikeout") strikeoutABs.add(abKey);
       }
     }
 
@@ -253,18 +261,23 @@ export async function fetchPitcherZoneStats(
         .filter(([t]) => set.has(t))
         .reduce((s, [, c]) => s + c, 0);
 
+    // Keep every zone the pitcher actually threw to (at most 9 in-zone + 4 chase
+    // zones exist), sorted most-frequent first. Previously this was capped to
+    // the top 5 by frequency, which silently dropped zones a pitcher gets hurt
+    // in but doesn't throw to often — exactly the kind of vulnerable-but-rare
+    // location a zone-fit check needs to see.
     const zoneProfile: PitcherZoneSlot[] = Object.entries(zoneCount)
       .map(([z, count]) => {
         const zone = parseInt(z);
         const n = zoneXBACount[zone] ?? 0;
         return {
           zone,
-          pct:  (count / totalPitches) * 100,
-          xBA:  n > 0 ? zoneXBASum[zone] / n : null,
+          pct:     (count / totalPitches) * 100,
+          pitches: count,
+          xBA:     n > 0 ? zoneXBASum[zone] / n : null,
         };
       })
-      .sort((a, b) => b.pct - a.pct)
-      .slice(0, 5);
+      .sort((a, b) => b.pct - a.pct);
 
     return {
       fastballPct:      (sumTypes(FASTBALL_TYPES) / totalPitches) * 100,
@@ -350,92 +363,133 @@ export async function fetchBatterZoneProfiles(
   return map;
 }
 
-// ─── Batter Discipline + Pitch Type Performance (Baseball Savant) ─────────────
+// ─── Pitch Arsenal (Baseball Savant pitch-arsenal-stats) ──────────────────────
+// One row per exact pitch type per player (FF, SI, FC, SL, ST, CU, CH, FS, ...),
+// covering the whole league in a single request. Works for both a pitcher's
+// arsenal (what they throw, how it performs) and a batter's per-pitch splits
+// (how they perform against each exact pitch type). `pa` is the sample-size
+// gate — always check it before trusting `ba`/`xba`/`whiff` on a pitch type.
 
-type BatterDisciplineEntry = {
-  chasePct: number;
-  baVsFastball: number;
-  baVsBreaking: number;
-  whiffVsBreaking: number;
-};
-
-export async function fetchBatterDisciplineData(season: number): Promise<Map<number, BatterDisciplineEntry>> {
-  const map = new Map<number, BatterDisciplineEntry>();
+export async function fetchPitchArsenalStats(
+  season: number,
+  type: "batter" | "pitcher"
+): Promise<Map<number, PitchArsenalEntry[]>> {
+  const map = new Map<number, PitchArsenalEntry[]>();
   try {
-    const [statcastRes, arsenalRes] = await Promise.allSettled([
-      fetch(
-        `https://baseballsavant.mlb.com/leaderboard/statcast?type=batter&year=${season}&position=&team=&min=1&csv=true`,
-        { cache: "no-store" }
-      ),
-      fetch(
-        `https://baseballsavant.mlb.com/leaderboard/pitch-arsenal-stats?type=batter&year=${season}&min=1&csv=true`,
-        { cache: "no-store" }
-      ),
-    ]);
+    const res = await fetch(
+      `https://baseballsavant.mlb.com/leaderboard/pitch-arsenal-stats?type=${type}&year=${season}&min=1&csv=true`,
+      { cache: "no-store", headers: SAVANT_HEADERS }
+    );
+    if (!res.ok) return map;
 
-    const parseCol = (cols: string[], idx: number) =>
-      idx >= 0 ? cols[idx]?.replace(/"/g, "").trim() ?? "" : "";
+    const text = await res.text();
+    const lines = text.trim().split("\n");
+    if (lines.length < 2) return map;
 
-    // Statcast batter leaderboard: o_swing% (chase rate)
-    if (statcastRes.status === "fulfilled" && statcastRes.value.ok) {
-      const text = await statcastRes.value.text();
-      const lines = text.trim().split("\n");
-      const header = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
-      const idIdx    = header.indexOf("player_id");
-      const chaseIdx = header.findIndex((h) => h === "o_swing_percent" || h === "oz_swing_percent");
-      if (idIdx >= 0 && chaseIdx >= 0) {
-        for (const line of lines.slice(1)) {
-          const cols  = line.split(",");
-          const id    = parseInt(parseCol(cols, idIdx));
-          const chase = parseFloat(parseCol(cols, chaseIdx));
-          if (isNaN(id) || isNaN(chase)) continue;
-          const prev = map.get(id) ?? { chasePct: 0, baVsFastball: 0, baVsBreaking: 0, whiffVsBreaking: 0 };
-          map.set(id, { ...prev, chasePct: chase });
-        }
-      }
+    const header = splitCSVLine(lines[0]).map((h) => h.replace(/"/g, "").trim());
+    const idIdx      = header.indexOf("player_id");
+    const typeIdx     = header.indexOf("pitch_type");
+    const pitchesIdx  = header.indexOf("pitches");
+    const usageIdx    = header.indexOf("pitch_usage");
+    const paIdx        = header.indexOf("pa");
+    const baIdx         = header.indexOf("ba");
+    const xbaIdx        = header.indexOf("est_ba");
+    const whiffIdx       = header.indexOf("whiff_percent");
+    const rvIdx           = header.indexOf("run_value_per_100");
+    if (idIdx < 0 || typeIdx < 0) return map;
+
+    const clean = (s: string | undefined) => s?.replace(/"/g, "").trim() ?? "";
+    const num = (cols: string[], idx: number) => {
+      if (idx < 0) return undefined;
+      const v = parseFloat(clean(cols[idx]));
+      return isNaN(v) ? undefined : v;
+    };
+
+    for (const line of lines.slice(1)) {
+      if (!line.trim()) continue;
+      const cols  = splitCSVLine(line);
+      const id    = parseInt(clean(cols[idIdx]));
+      const ptype = clean(cols[typeIdx]).toUpperCase();
+      if (isNaN(id) || !ptype) continue;
+
+      const entry: PitchArsenalEntry = {
+        type: ptype,
+        pitches: num(cols, pitchesIdx) ?? 0,
+        usage: num(cols, usageIdx) ?? 0,
+        pa: num(cols, paIdx) ?? 0,
+        ba: num(cols, baIdx),
+        xba: num(cols, xbaIdx),
+        whiff: num(cols, whiffIdx),
+        runValue: num(cols, rvIdx),
+      };
+
+      if (!map.has(id)) map.set(id, []);
+      map.get(id)!.push(entry);
     }
 
-    // Batter arsenal endpoint: per pitch-type BA and whiff rate
-    if (arsenalRes.status === "fulfilled" && arsenalRes.value.ok) {
-      const text = await arsenalRes.value.text();
-      const lines = text.trim().split("\n");
-      const header = lines[0].split(",").map((h) => h.trim().replace(/"/g, ""));
-      const idIdx      = header.indexOf("player_id");
-      const typeIdx    = header.indexOf("pitch_type");
-      const baIdx      = header.findIndex((h) => h === "ba"  || h === "batting_avg");
-      const whiffIdx   = header.findIndex((h) => h === "whiff_percent" || h === "whiff_pct");
-      if (idIdx >= 0 && typeIdx >= 0) {
-        for (const line of lines.slice(1)) {
-          const cols  = line.split(",");
-          const id    = parseInt(parseCol(cols, idIdx));
-          const ptype = parseCol(cols, typeIdx).toUpperCase();
-          if (isNaN(id)) continue;
-          const ba    = baIdx    >= 0 ? parseFloat(parseCol(cols, baIdx))    : NaN;
-          const whiff = whiffIdx >= 0 ? parseFloat(parseCol(cols, whiffIdx)) : NaN;
-          const prev  = map.get(id) ?? { chasePct: 0, baVsFastball: 0, baVsBreaking: 0, whiffVsBreaking: 0 };
-          if (FASTBALL_TYPES.has(ptype) && !isNaN(ba)) {
-            // Average BA across fastball types (simple running mean)
-            const existing = prev.baVsFastball;
-            prev.baVsFastball = existing > 0 ? (existing + ba) / 2 : ba;
-          }
-          if (BREAKING_TYPES.has(ptype)) {
-            if (!isNaN(ba)) {
-              const existing = prev.baVsBreaking;
-              prev.baVsBreaking = existing > 0 ? (existing + ba) / 2 : ba;
-            }
-            if (!isNaN(whiff)) {
-              const existing = prev.whiffVsBreaking;
-              prev.whiffVsBreaking = existing > 0 ? (existing + whiff) / 2 : whiff;
-            }
-          }
-          map.set(id, prev);
-        }
-      }
-    }
+    for (const entries of map.values()) entries.sort((a, b) => b.usage - a.usage);
   } catch {
     // optional data — return whatever we have
   }
   return map;
+}
+
+// Sample-size gate for any per-pitch outcome stat (ba/xba/whiff) — this is what
+// prevents a 1-PA fluke (e.g. a single 1-for-1 at-bat) from swinging an average.
+const MIN_PA_FOR_SPLIT = 10;
+
+function bucketOf(ptype: string): "fastball" | "breaking" | "offspeed" | null {
+  if (FASTBALL_TYPES.has(ptype)) return "fastball";
+  if (BREAKING_TYPES.has(ptype)) return "breaking";
+  if (OFFSPEED_TYPES.has(ptype)) return "offspeed";
+  return null;
+}
+
+// PA-weighted average of a per-pitch stat across a set of arsenal entries,
+// skipping any entry below MIN_PA_FOR_SPLIT. Replaces the old naive running
+// mean that let a single tiny-sample pitch type dominate the result.
+function weightedAvg(entries: PitchArsenalEntry[], key: "ba" | "whiff"): number | undefined {
+  let wSum = 0, vSum = 0;
+  for (const e of entries) {
+    const v = e[key];
+    if (v === undefined || e.pa < MIN_PA_FOR_SPLIT) continue;
+    wSum += e.pa;
+    vSum += v * e.pa;
+  }
+  return wSum > 0 ? vSum / wSum : undefined;
+}
+
+/**
+ * Derives the legacy fastball/breaking/offspeed bucket fields from exact-pitch
+ * arsenal data — usage% is a straight pitch-count share (no sample concern),
+ * while BA/whiff are PA-weighted and sample-gated via weightedAvg.
+ */
+export function deriveArsenalBuckets(entries: PitchArsenalEntry[] | undefined): {
+  fastballPct?: number; breakingPct?: number; offspeedPct?: number;
+  baVsFastball?: number; baVsBreaking?: number; whiffVsBreaking?: number;
+} {
+  if (!entries || entries.length === 0) return {};
+  const totalPitches = entries.reduce((s, e) => s + e.pitches, 0);
+  if (totalPitches === 0) return {};
+
+  const byBucket: Record<"fastball" | "breaking" | "offspeed", PitchArsenalEntry[]> =
+    { fastball: [], breaking: [], offspeed: [] };
+  for (const e of entries) {
+    const b = bucketOf(e.type);
+    if (b) byBucket[b].push(e);
+  }
+
+  const pctOf = (b: "fastball" | "breaking" | "offspeed") =>
+    (byBucket[b].reduce((s, e) => s + e.pitches, 0) / totalPitches) * 100;
+
+  return {
+    fastballPct: pctOf("fastball"),
+    breakingPct: pctOf("breaking"),
+    offspeedPct: pctOf("offspeed"),
+    baVsFastball: weightedAvg(byBucket.fastball, "ba"),
+    baVsBreaking: weightedAvg(byBucket.breaking, "ba"),
+    whiffVsBreaking: weightedAvg(byBucket.breaking, "whiff"),
+  };
 }
 
 // ─── Batter vs Pitcher (career H2H) ───────────────────────────────────────────
@@ -730,8 +784,12 @@ export async function fetchPitcherStats(playerId: number, season: number): Promi
     }
 
     let seasonHRAllowed = 0;
+    let seasonHitsAllowed = 0, seasonInningsPitched = 0;
     if (seasonRes.status === "fulfilled") {
-      seasonHRAllowed = seasonRes.value.stats?.[0]?.splits?.[0]?.stat?.homeRuns ?? 0;
+      const s = seasonRes.value.stats?.[0]?.splits?.[0]?.stat ?? {};
+      seasonHRAllowed = s.homeRuns ?? 0;
+      seasonHitsAllowed = s.hits ?? 0;
+      seasonInningsPitched = parseFloat(s.inningsPitched ?? "0");
     }
     const last3HRAllowed = last3Starts.reduce((s, g) => s + ((g as any).hr || 0), 0);
 
@@ -766,6 +824,8 @@ export async function fetchPitcherStats(playerId: number, season: number): Promi
       last3InningsPitched,
       last3Starts,
       seasonHRAllowed,
+      seasonHitsAllowed,
+      seasonInningsPitched,
       last3HRAllowed,
       baaVsLeft,
       baaVsRight,
@@ -774,6 +834,36 @@ export async function fetchPitcherStats(playerId: number, season: number): Promi
     };
   } catch {
     return {};
+  }
+}
+
+// ─── Team Recent Strikeout Rate ────────────────────────────────────────────────
+// Whole-team K% over a trailing window (not just the top-PA lineup) — feeds the
+// "team is striking out a lot lately, and today's starter is a strikeout
+// pitcher" flag. One MLB Stats API call per team per day.
+
+const TEAM_K_RATE_LOOKBACK_DAYS = 10;
+
+export async function fetchTeamRecentKRate(
+  teamId: number,
+  asOfDate: string
+): Promise<{ kPct: number; plateAppearances: number } | null> {
+  try {
+    const end = new Date(asOfDate);
+    const start = new Date(end);
+    start.setDate(start.getDate() - TEAM_K_RATE_LOOKBACK_DAYS);
+    const fmtDate = (d: Date) => d.toISOString().slice(0, 10);
+
+    const data = await get<any>(
+      `/teams/${teamId}/stats?stats=byDateRange&group=hitting&sportId=1&startDate=${fmtDate(start)}&endDate=${fmtDate(end)}`
+    );
+    const stat = data.stats?.[0]?.splits?.[0]?.stat;
+    const pa = stat?.plateAppearances ?? 0;
+    const k  = stat?.strikeOuts ?? 0;
+    if (!pa) return null;
+    return { kPct: (k / pa) * 100, plateAppearances: pa };
+  } catch {
+    return null;
   }
 }
 
@@ -840,12 +930,15 @@ export async function fetchTeamTopBatters(
 export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
   const season = new Date(date).getFullYear();
 
-  // Fetch schedule + batter Statcast leaderboards in parallel
-  // Pitcher arsenal data is now fetched per-pitcher via fetchPitcherZoneStats
-  const [scheduleItems, statcastMap, batterDisciplineMap] = await Promise.all([
+  // Fetch schedule + season-level Statcast leaderboards in parallel.
+  // batterArsenalMap/pitcherArsenalMap cover the whole league in one request
+  // each (Savant leaderboard), same pattern as statcastMap — not per-batter/
+  // per-pitcher, so this doesn't multiply per-game requests.
+  const [scheduleItems, statcastMap, batterArsenalMap, pitcherArsenalMap] = await Promise.all([
     fetchSchedule(date),
     fetchStatcastData(season),
-    fetchBatterDisciplineData(season),
+    fetchPitchArsenalStats(season, "batter"),
+    fetchPitchArsenalStats(season, "pitcher"),
   ]);
 
   const games: MLBGame[] = await Promise.all(
@@ -870,21 +963,25 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
       const awayBatterIds = awayLineup.map((p) => p.id);
       const allBatterIds  = [...homeBatterIds, ...awayBatterIds];
 
-      const [batterStatsArr, batterZoneMap, homePitcherStats, awayPitcherStats, homePitcherZone, awayPitcherZone] = await Promise.all([
+      const [batterStatsArr, batterZoneMap, homePitcherStats, awayPitcherStats, homePitcherZone, awayPitcherZone, homeTeamKRate, awayTeamKRate] = await Promise.all([
         Promise.all(allBatterIds.map((id) => fetchBatterStats(id, season))),
         fetchBatterZoneProfiles(allBatterIds, season),
         homePitcherId ? fetchPitcherStats(homePitcherId, season)     : Promise.resolve({}),
         awayPitcherId ? fetchPitcherStats(awayPitcherId, season)     : Promise.resolve({}),
         homePitcherId ? fetchPitcherZoneStats(homePitcherId, season)  : Promise.resolve({}),
         awayPitcherId ? fetchPitcherZoneStats(awayPitcherId, season)  : Promise.resolve({}),
+        fetchTeamRecentKRate(item.homeTeam.id, date),
+        fetchTeamRecentKRate(item.awayTeam.id, date),
       ]);
 
       const batterStatsMap: Record<number, Partial<MLBBatter>> = {};
       allBatterIds.forEach((id, i) => {
+        const pitchArsenal = batterArsenalMap.get(id);
         batterStatsMap[id] = {
           ...batterStatsArr[i],
-          ...(statcastMap.has(id)         ? statcastMap.get(id)!         : {}),
-          ...(batterDisciplineMap.has(id) ? batterDisciplineMap.get(id)! : {}),
+          ...(statcastMap.has(id) ? statcastMap.get(id)! : {}),
+          pitchArsenal,
+          ...deriveArsenalBuckets(pitchArsenal),
         };
       });
 
@@ -933,8 +1030,10 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
         stats: Partial<MLBPitcher>,
         zoneStats: Partial<PitcherZoneStatsResult>,
         nameMap: Map<number, string>,
+        opposingTeamKPct: number | undefined,
       ): MLBPitcher | undefined => {
         if (!id) return undefined;
+        const pitchArsenal = pitcherArsenalMap.get(id);
         return {
           id,
           name: nameMap.get(id) ?? "Unknown",
@@ -948,6 +1047,13 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
           last3HRAllowed: 0,
           ...stats,
           ...zoneStats,
+          opposingTeamKPct,
+          pitchArsenal,
+          // Arsenal usage% is Savant's own per-pitch-type share — more accurate
+          // than the raw pitch-by-pitch bucket count above, so it wins here.
+          // (Only the usage fields apply to a pitcher — baVs*/whiffVs* from
+          // deriveArsenalBuckets are batting stats and belong on batters only.)
+          ...(({ fastballPct, breakingPct, offspeedPct }) => ({ fastballPct, breakingPct, offspeedPct }))(deriveArsenalBuckets(pitchArsenal)),
         };
       };
 
@@ -978,8 +1084,10 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
         parkFactor: parkInfo.factor,
         homeLineup: homeLineup.map((p) => buildBatter(p, true)),
         awayLineup: awayLineup.map((p) => buildBatter(p, false)),
-        homeStartingPitcher: buildPitcher(homePitcherId, homePitcherStats, homePitcherZone, nameMap),
-        awayStartingPitcher: buildPitcher(awayPitcherId, awayPitcherStats, awayPitcherZone, nameMap),
+        // A pitcher's "opposing team K rate" is the OTHER team's recent strikeout
+        // rate — the home starter faces the away lineup, and vice versa.
+        homeStartingPitcher: buildPitcher(homePitcherId, homePitcherStats, homePitcherZone, nameMap, awayTeamKRate?.kPct),
+        awayStartingPitcher: buildPitcher(awayPitcherId, awayPitcherStats, awayPitcherZone, nameMap, homeTeamKRate?.kPct),
       };
     })
   );

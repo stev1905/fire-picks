@@ -61,55 +61,87 @@ function calcWeatherComponent(
   return { score, value: `${windLabel}${tempLabel}` };
 }
 
-/** Derive a pitch matchup score component (-8 to +8) and readable label */
+const PITCH_NAMES: Record<string, string> = {
+  FF: "Fastball", SI: "Sinker", FC: "Cutter",
+  SL: "Slider", ST: "Sweeper", CU: "Curveball", KC: "Knuckle Curve", CS: "Slow Curve", SV: "Slurve",
+  CH: "Changeup", FS: "Splitter", FO: "Forkball", KN: "Knuckleball",
+};
+
+function pitchName(type: string): string {
+  return PITCH_NAMES[type] ?? type;
+}
+
+function clampSigned(v: number, max: number) {
+  return Math.max(-max, Math.min(max, v));
+}
+
+// A pitch has to be a real part of the arsenal (not a show-me pitch) and have
+// enough of the pitcher's own PAs behind it before it's trusted as a signal.
+const PITCHER_PITCH_MIN_USAGE = 15; // %
+const PITCHER_PITCH_MIN_PA = 15;
+// Batter's split on that exact pitch needs its own sample before it counts —
+// this is the guardrail that stops a 1-PA fluke from swinging the score.
+const BATTER_PITCH_MIN_PA = 10;
+
+/**
+ * Derive a pitch matchup score component (0–8, baseline 4) from exact
+ * pitch-type arsenal data (Baseball Savant pitch-arsenal-stats via
+ * MLBPitcher/MLBBatter.pitchArsenal). Only pitches that are a real, reliably
+ * sampled part of the pitcher's arsenal are considered; each is weighted by
+ * how often the pitcher actually throws it, so their most-used pitch
+ * dominates the signal rather than a single rare/gimmick pitch "reaching."
+ * Combines contact quality (xBA) and contact rate (whiff%) on that exact pitch.
+ */
 export function calcPitchMatchup(
   batter: MLBBatter,
   pitcher: MLBPitcher
 ): { earned: number; max: number; value: string } {
-  let delta = 0;
-  const notes: string[] = [];
+  const pitcherPitches = (pitcher.pitchArsenal ?? [])
+    .filter((p) => p.usage >= PITCHER_PITCH_MIN_USAGE && p.pa >= PITCHER_PITCH_MIN_PA);
 
-  const hasArsenal = pitcher.fastballPct !== undefined || pitcher.breakingPct !== undefined;
-  const hasDiscipline = batter.chasePct !== undefined || batter.baVsBreaking !== undefined;
-  if (!hasArsenal && !hasDiscipline) return { earned: 4, max: 8, value: "—" };
-
-  // Breaking ball matchup
-  const brPct = pitcher.breakingPct ?? 0;
-  if (brPct > 25) {
-    if (batter.baVsBreaking !== undefined) {
-      if (batter.baVsBreaking >= 0.260)      { delta += 2; notes.push(`hits breaking balls (.${Math.round(batter.baVsBreaking * 1000)})`); }
-      else if (batter.baVsBreaking < 0.220)  { delta -= 2; notes.push(`struggles vs breaking (.${Math.round(batter.baVsBreaking * 1000)})`); }
-    }
-    if (batter.whiffVsBreaking !== undefined && batter.whiffVsBreaking > 35) {
-      delta -= 1;
-      notes.push(`high whiff vs breaking (${batter.whiffVsBreaking.toFixed(0)}%)`);
-    }
+  if (pitcherPitches.length === 0 || !batter.pitchArsenal?.length) {
+    return { earned: 4, max: 8, value: "—" };
   }
 
-  // Fastball matchup
-  const fbPct = pitcher.fastballPct ?? 0;
-  if (fbPct > 45) {
-    if (batter.baVsFastball !== undefined) {
-      if (batter.baVsFastball >= 0.290)      { delta += 2; notes.push(`strong vs fastball (.${Math.round(batter.baVsFastball * 1000)})`); }
-      else if (batter.baVsFastball < 0.230)  { delta -= 1; notes.push(`below avg vs fastball`); }
-    }
+  type Matched = { usage: number; delta: number; note: string };
+  const matched: Matched[] = [];
+
+  for (const pp of pitcherPitches) {
+    const bp = batter.pitchArsenal.find((e) => e.type === pp.type && e.pa >= BATTER_PITCH_MIN_PA);
+    if (!bp) continue;
+    const xba = bp.xba ?? bp.ba;
+    if (xba === undefined) continue;
+
+    // Contact quality vs a roughly league-average xBA (~.245) — ±3 pts
+    const xbaDelta = clampSigned(((xba - 0.245) / 0.070) * 3, 3);
+    // Contact rate vs a roughly league-average whiff rate (~24%) — ±1.5 pts
+    const whiffDelta = bp.whiff !== undefined
+      ? clampSigned(((24 - bp.whiff) / 12) * 1.5, 1.5)
+      : 0;
+
+    const delta = xbaDelta + whiffDelta;
+    const name = pitchName(pp.type);
+    const note =
+      delta >= 1  ? `hits ${name} well (${fmt(xba)} xBA, ${pp.usage.toFixed(0)}% usage)` :
+      delta <= -1 ? `struggles vs ${name} (${fmt(xba)} xBA, ${pp.usage.toFixed(0)}% usage)` :
+                    `neutral vs ${name} (${pp.usage.toFixed(0)}% usage)`;
+
+    matched.push({ usage: pp.usage, delta, note });
   }
 
-  // Chase rate matchup
-  if (pitcher.chaseInducePct !== undefined && batter.chasePct !== undefined) {
-    if (pitcher.chaseInducePct > 32 && batter.chasePct > 32) {
-      delta -= 2;
-      notes.push(`chases pitches (${batter.chasePct.toFixed(0)}%) vs deceptive pitcher`);
-    } else if (pitcher.zonePct !== undefined && pitcher.zonePct < 44 && batter.chasePct < 26) {
-      delta += 1;
-      notes.push(`disciplined eye vs off-zone pitcher`);
-    }
-  }
+  if (matched.length === 0) return { earned: 4, max: 8, value: "—" };
 
-  // Map delta (-6 to +6) onto earned (0–8), baseline 4
-  const earned = clamp(4 + delta, 8);
-  const value = notes[0] ?? (delta > 0 ? "slight advantage" : delta < 0 ? "slight disadvantage" : "neutral");
-  return { earned, max: 8, value };
+  // Usage-weighted average across every qualifying pitch — a single dominant,
+  // well-sampled pitch can still swing the full range; multiple pitches blend
+  // proportionally to how often the pitcher actually throws each one.
+  const totalUsage = matched.reduce((s, m) => s + m.usage, 0);
+  const weightedDelta = matched.reduce((s, m) => s + m.delta * m.usage, 0) / totalUsage;
+  const earned = clamp(4 + clampSigned(weightedDelta, 4), 8);
+
+  // Lead with whichever matched pitch drove the biggest swing
+  const lead = matched.reduce((a, b) => (Math.abs(b.delta) > Math.abs(a.delta) ? b : a));
+
+  return { earned: Math.round(earned), max: 8, value: lead.note };
 }
 
 /**
@@ -245,28 +277,55 @@ export function calcHitScoreBreakdown(
   // 6. Pitcher H/9 rate (0–HIT_WEIGHTS.pitcherH)
   //    Rate-based so relievers and starters are comparable.
   //    5.0 H/9 = elite (0 pts), 11.0 H/9 = very hittable (max pts). League avg ~8.5.
-  const W_PITCHER_H = HIT_WEIGHTS.pitcherH; // 4
-  let pitcherScore = 0;
+  //    A bullpen game / spot start / opener can leave last3InningsPitched tiny
+  //    (a couple short relief outings) — too small a sample to trust for this,
+  //    the single biggest-weighted component in the whole model. Previously that
+  //    thin sample fed straight into the formula anyway, and true no-data cases
+  //    scored a flat 0/25 — the single largest possible penalty, purely from not
+  //    knowing anything. Now: fall back to season H/9 when the recent sample is
+  //    too thin, and default to a neutral midpoint (not 0) when there's truly no
+  //    reliable data either way — missing information shouldn't read as "worst
+  //    pitcher in the league."
+  const W_PITCHER_H = HIT_WEIGHTS.pitcherH; // 25
+  const MIN_RELIABLE_RECENT_IP = 9;  // ~3 real starts worth
+  const MIN_RELIABLE_SEASON_IP = 10;
+  let pitcherScore = W_PITCHER_H / 2; // neutral default
   if (pitcher) {
-    const h9 = pitcher.last3InningsPitched > 0
-      ? (pitcher.last3HitsAllowed / pitcher.last3InningsPitched) * 9
-      : null;
+    const recentReliable = pitcher.last3InningsPitched >= MIN_RELIABLE_RECENT_IP;
+    const seasonReliable = (pitcher.seasonInningsPitched ?? 0) >= MIN_RELIABLE_SEASON_IP;
+
+    let h9: number | null = null;
+    let source: "recent" | "season" | null = null;
+    if (recentReliable) {
+      h9 = (pitcher.last3HitsAllowed / pitcher.last3InningsPitched) * 9;
+      source = "recent";
+    } else if (seasonReliable) {
+      h9 = (pitcher.seasonHitsAllowed! / pitcher.seasonInningsPitched!) * 9;
+      source = "season";
+    }
+
     if (h9 !== null) {
       pitcherScore = clamp(((h9 - 5.0) / 6.0) * W_PITCHER_H, W_PITCHER_H);
     }
+
     const pitcherTier =
-      h9 === null          ? "no data" :
-      h9 >= 10.0           ? "very hittable" :
-      h9 >= 8.5            ? "above avg" :
-      h9 >= 7.0            ? "average" : "tough";
-    const ipLabel = pitcher.last3InningsPitched > 0
-      ? `${pitcher.last3HitsAllowed}H / ${pitcher.last3InningsPitched.toFixed(1)}IP`
-      : `${pitcher.last3HitsAllowed} hits`;
+      h9 === null ? "no data — neutral" :
+      h9 >= 10.0  ? "very hittable" :
+      h9 >= 8.5   ? "above avg" :
+      h9 >= 7.0   ? "average" : "tough";
+
+    const ipLabel =
+      source === "recent" ? `${pitcher.last3HitsAllowed}H / ${pitcher.last3InningsPitched.toFixed(1)}IP` :
+      source === "season" ? `${pitcher.seasonHitsAllowed}H / ${pitcher.seasonInningsPitched!.toFixed(1)}IP` :
+      pitcher.last3InningsPitched > 0 ? `${pitcher.last3HitsAllowed}H / ${pitcher.last3InningsPitched.toFixed(1)}IP (thin sample)` :
+      "no innings logged";
+    const sourceSuffix = source === "season" ? " · season (thin recent sample)" : "";
+
     components.push({
-      label: "Pitcher H/9 (L3 apps)",
+      label: source === "season" ? "Pitcher H/9 (season)" : "Pitcher H/9 (L3 apps)",
       earned: Math.round(pitcherScore),
       max: W_PITCHER_H,
-      value: h9 !== null ? `${h9.toFixed(1)} H/9 (${ipLabel}) — ${pitcherTier}` : `${ipLabel} — ${pitcherTier}`,
+      value: h9 !== null ? `${h9.toFixed(1)} H/9 (${ipLabel})${sourceSuffix} — ${pitcherTier}` : `${ipLabel} — ${pitcherTier}`,
     });
   }
 
@@ -341,12 +400,20 @@ export function calcHitScoreBreakdown(
       : "—",
   });
 
-  // 11. Pitch matchup — pitcher arsenal vs batter discipline (0–8, baseline 4 = neutral)
+  // 11. Matchup — exact pitch-type arsenal + zone-location overlap, combined
+  //     into a single 0–8 (baseline 4) modifier. Zone fit is folded into this
+  //     same budget rather than added as a new one, so the total score's
+  //     achievable range is unchanged from before this component existed.
   let pitchMatchupScore = 0;
   if (pitcher) {
     const pm = calcPitchMatchup(batter, pitcher);
-    pitchMatchupScore = pm.earned - 4; // offset from neutral baseline so it doesn't double-count
-    components.push({ label: "Pitch Matchup", earned: pm.earned, max: pm.max, value: pm.value });
+    const zf = calcZoneFitDelta(batter, pitcher);
+    const combinedDelta = clampSigned((pm.earned - 4) + zf.delta, 4);
+    const earned = clamp(4 + combinedDelta, 8);
+    pitchMatchupScore = earned - 4; // offset from neutral baseline so it doesn't double-count
+    // Lead with whichever signal is doing more of the work
+    const value = zf.note && Math.abs(zf.delta) > Math.abs(pm.earned - 4) ? zf.note : pm.value;
+    components.push({ label: "Matchup (Pitch + Zone)", earned: Math.round(earned), max: 8, value });
   }
 
   // 12. Momentum — bounce-back bonus (hitless exactly yesterday, quality hitter)
@@ -725,9 +792,63 @@ function isLowZone(z: number) { return (z >= 7 && z <= 9) || z === 13 || z === 1
 // Is the zone a chase zone (outside the strike zone)?
 function isChaseZone(z: number) { return z >= 11; }
 
+// A pitcher's zone needs a real sample behind it before its xBA-against is
+// trusted as a "vulnerable spot" — otherwise a 1-2 pitch zone with a lucky
+// (or unlucky) result looks identical to a real weakness.
+const PITCHER_ZONE_MIN_PITCHES = 8;
+
+type ZoneFitMatch = { zone: number; xBA: number; kind: "hot" | "cold" };
+
 /**
- * Zone Fit — directly overlaps the pitcher's most-targeted in-zone locations
- * against the batter's personal hot/cold zone map (both from statcast_search data).
+ * Finds the strongest overlap between where a batter is hot/cold (by xBA,
+ * min 5 pitches seen in that zone) and where the pitcher actually lives —
+ * both their most-thrown zones (where they live most) AND their most
+ * vulnerable zones (worst xBA against, min 8 pitches so a tiny sample can't
+ * manufacture a fake weak spot). Shared by the card badge and the score.
+ */
+function zoneFitCore(batter: MLBBatter, pitcher: MLBPitcher): ZoneFitMatch | null {
+  const inZone = pitcher.zoneProfile?.filter((z) => z.zone >= 1 && z.zone <= 9) ?? [];
+  const batterZones = batter.zoneProfile?.filter((z) => z.zone >= 1 && z.zone <= 9 && z.pitches >= 5);
+  if (!inZone.length || !batterZones?.length) return null;
+
+  // Where the pitcher lives most (zoneProfile is sorted most-frequent first)
+  const frequentTargets = inZone.slice(0, 2).map((z) => z.zone);
+  // Where the pitcher has actually been hurt (worst xBA against, sample-gated)
+  const vulnerableTargets = inZone
+    .filter((z) => z.pitches >= PITCHER_ZONE_MIN_PITCHES && z.xBA !== null)
+    .sort((a, b) => (b.xBA as number) - (a.xBA as number))
+    .slice(0, 2)
+    .map((z) => z.zone);
+  const targets = Array.from(new Set([...frequentTargets, ...vulnerableTargets]));
+
+  // Batter's hot and cold zones from their personal xBA map
+  const hotZones  = batterZones.filter((z) => z.xBA > 0.310).map((z) => z.zone);
+  const coldZones = batterZones.filter((z) => z.xBA < 0.210).map((z) => z.zone);
+
+  const hotMatch  = targets.find((z) => hotZones.includes(z));
+  const coldMatch = targets.find((z) => coldZones.includes(z));
+  if (!hotMatch && !coldMatch) return null;
+
+  // When both overlap, surface the stronger signal
+  if (hotMatch && coldMatch) {
+    const hotXBA  = batterZones.find((z) => z.zone === hotMatch)?.xBA  ?? 0.260;
+    const coldXBA = batterZones.find((z) => z.zone === coldMatch)?.xBA ?? 0.260;
+    return hotXBA - 0.260 >= 0.260 - coldXBA
+      ? { zone: hotMatch,  xBA: hotXBA,  kind: "hot" }
+      : { zone: coldMatch, xBA: coldXBA, kind: "cold" };
+  }
+  if (hotMatch) {
+    const xBA = batterZones.find((z) => z.zone === hotMatch)?.xBA ?? 0;
+    return { zone: hotMatch, xBA, kind: "hot" };
+  }
+  const xBA = batterZones.find((z) => z.zone === coldMatch)?.xBA ?? 0;
+  return { zone: coldMatch!, xBA, kind: "cold" };
+}
+
+/**
+ * Zone Fit badge — directly overlaps the pitcher's most-targeted/most-vulnerable
+ * in-zone locations against the batter's personal hot/cold zone map. Standalone
+ * card badge — unaffected by the scoring change below.
  *
  * Hot zone:  batter xBA > 0.310 in that zone → batter edge when pitcher attacks it
  * Cold zone: batter xBA < 0.210 in that zone → pitcher edge when they attack there
@@ -736,40 +857,28 @@ export function calcZoneFit(
   batter: MLBBatter,
   pitcher: MLBPitcher
 ): { favor: "pitcher" | "batter"; label: string; detail: string } | null {
-  const pitcherZones = pitcher.zoneProfile?.filter((z) => z.zone >= 1 && z.zone <= 9);
-  const batterZones  = batter.zoneProfile?.filter((z)  => z.zone >= 1 && z.zone <= 9 && z.pitches >= 5);
+  const match = zoneFitCore(batter, pitcher);
+  if (!match) return null;
+  const favor = match.kind === "hot" ? "batter" : "pitcher";
+  const arrow = match.kind === "hot" ? "↑" : "↓";
+  return {
+    favor,
+    label: `Zone Fit: ${zoneLabel(match.zone)} ${arrow}`,
+    detail: `xBA .${Math.round(match.xBA * 1000)} in ${match.kind} zone`,
+  };
+}
 
-  if (!pitcherZones?.length || !batterZones?.length) return null;
-
-  // Pitcher's top 2 in-zone targets (where they live most)
-  const pitcherTargets = pitcherZones.slice(0, 2).map((z) => z.zone);
-
-  // Batter's hot and cold zones from their personal xBA map
-  const hotZones  = batterZones.filter((z) => z.xBA > 0.310).map((z) => z.zone);
-  const coldZones = batterZones.filter((z) => z.xBA < 0.210).map((z) => z.zone);
-
-  const hotMatch  = pitcherTargets.find((z) => hotZones.includes(z));
-  const coldMatch = pitcherTargets.find((z) => coldZones.includes(z));
-
-  if (!hotMatch && !coldMatch) return null;
-
-  // When both overlap, surface the stronger signal
-  if (hotMatch && coldMatch) {
-    const hotXBA  = batterZones.find((z) => z.zone === hotMatch)?.xBA  ?? 0.260;
-    const coldXBA = batterZones.find((z) => z.zone === coldMatch)?.xBA ?? 0.260;
-    if (hotXBA - 0.260 >= 0.260 - coldXBA) {
-      return { favor: "batter",  label: `Zone Fit: ${zoneLabel(hotMatch)} ↑`,  detail: `xBA .${Math.round(hotXBA * 1000)} in hot zone` };
-    }
-    return { favor: "pitcher", label: `Zone Fit: ${zoneLabel(coldMatch)} ↓`, detail: `xBA .${Math.round(coldXBA * 1000)} in cold zone` };
-  }
-
-  if (hotMatch) {
-    const xBA = batterZones.find((z) => z.zone === hotMatch)?.xBA ?? 0;
-    return { favor: "batter",  label: `Zone Fit: ${zoneLabel(hotMatch)} ↑`,  detail: `xBA .${Math.round(xBA * 1000)} in hot zone` };
-  }
-
-  const xBA = batterZones.find((z) => z.zone === coldMatch)?.xBA ?? 0;
-  return { favor: "pitcher", label: `Zone Fit: ${zoneLabel(coldMatch!)} ↓`, detail: `xBA .${Math.round(xBA * 1000)} in cold zone` };
+/**
+ * Small (±2) scoring delta from the same zone-fit signal, for use inside
+ * calcHitScoreBreakdown — folded into the Pitch Matchup modifier's existing
+ * budget rather than adding a new separate one (see calcHitScoreBreakdown).
+ */
+function calcZoneFitDelta(batter: MLBBatter, pitcher: MLBPitcher): { delta: number; note: string | null } {
+  const match = zoneFitCore(batter, pitcher);
+  if (!match) return { delta: 0, note: null };
+  const delta = match.kind === "hot" ? 2 : -2;
+  const note = `${match.kind} zone overlap: ${zoneLabel(match.zone)} (.${Math.round(match.xBA * 1000)} xBA)`;
+  return { delta, note };
 }
 
 /**
@@ -807,4 +916,31 @@ export function pitcherSweetSpot(
                               "bg-amber-600/80 text-white";
 
   return { label: `${pct.toFixed(0)}% ${dominant} ${qualifier}${zoneSuffix}`, color };
+}
+
+// Real strikeout-pitcher territory (season K% per AB) and a team recently
+// running notably hotter than the ~22% league-average whiff rate.
+const K_RISK_PITCHER_MIN_KPCT = 25;
+const K_RISK_TEAM_MIN_KPCT = 24;
+
+/**
+ * Strikeout-risk flag — today's starter has a real strikeout arsenal AND the
+ * opposing team has been striking out a lot over their last ~10 days. Both
+ * conditions have to hold; either alone isn't a signal (an ace facing a
+ * disciplined lineup, or a soft-tosser facing a free-swinging one, isn't the
+ * same risk as both stacking together).
+ */
+export function strikeoutRiskBadge(
+  pitcher: MLBPitcher
+): { label: string; detail: string; color: string } | null {
+  const kPct = pitcher.kPct;
+  const teamKPct = pitcher.opposingTeamKPct;
+  if (kPct === undefined || teamKPct === undefined) return null;
+  if (kPct < K_RISK_PITCHER_MIN_KPCT || teamKPct < K_RISK_TEAM_MIN_KPCT) return null;
+
+  return {
+    label: "K Risk",
+    detail: `${pitcher.name.split(" ").slice(-1)[0]} ${kPct.toFixed(0)}% K vs a lineup striking out ${teamKPct.toFixed(0)}% lately`,
+    color: "bg-red-600/85 text-white",
+  };
 }

@@ -23,8 +23,6 @@ export interface PitcherAnalyticsRow {
   xBAAgainst?: number;
   whiffPct?: number;
   kPct?: number;
-  zonePct?: number;
-  chaseInducePct?: number;
   fastballPct?: number;
   breakingPct?: number;
   offspeedPct?: number;
@@ -77,8 +75,6 @@ export function buildPitcherAnalyticsRows(
       xBAAgainst: p.xBAAgainst,
       whiffPct: p.whiffPct,
       kPct: p.kPct,
-      zonePct: p.zonePct,
-      chaseInducePct: p.chaseInducePct,
       fastballPct: p.fastballPct,
       breakingPct: p.breakingPct,
       offspeedPct: p.offspeedPct,

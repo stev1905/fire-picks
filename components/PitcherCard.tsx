@@ -3,7 +3,7 @@
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import type { MLBPitcher } from "@/types/mlb";
-import { pitcherSweetSpot } from "@/lib/scores";
+import { pitcherSweetSpot, strikeoutRiskBadge } from "@/lib/scores";
 
 interface Props {
   pitcher: MLBPitcher;
@@ -28,6 +28,7 @@ function eraColor(era: number) {
 
 export function PitcherCard({ pitcher, role }: Props) {
   const sweetSpot = pitcherSweetSpot(pitcher);
+  const kRisk = strikeoutRiskBadge(pitcher);
 
   return (
     <Card>
@@ -45,7 +46,18 @@ export function PitcherCard({ pitcher, role }: Props) {
                   {sweetSpot.label}
                 </span>
               )}
+              {kRisk && (
+                <span
+                  title={kRisk.detail}
+                  className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${kRisk.color}`}
+                >
+                  {kRisk.label}
+                </span>
+              )}
             </div>
+            {kRisk && (
+              <div className="text-[10px] text-red-500 dark:text-red-400 mt-1">{kRisk.detail}</div>
+            )}
           </div>
           <div className={`text-3xl font-bold font-mono ${eraColor(pitcher.seasonERA)}`}>
             {pitcher.seasonERA.toFixed(2)}
