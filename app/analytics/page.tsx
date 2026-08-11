@@ -160,14 +160,13 @@ export default async function AnalyticsPage() {
 
   const today = new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
 
-  const [hotHR, hitConsistency, parkRankings] = await Promise.all([
+  const [hotHR, hitConsistency, parkRankings, aiPicks, bestSluggers] = await Promise.all([
     Promise.resolve(getHottestHRHitters(snapshot)),
     Promise.resolve(getHitConsistency(snapshot)),
     getParkHRRankings(snapshot),
+    buildAiPicksRows(snapshot),
+    buildBestSluggersRows(snapshot),
   ]);
-
-  const aiPicks = buildAiPicksRows(snapshot);
-  const bestSluggers = buildBestSluggersRows(snapshot);
 
   const allPitchers = buildPitcherAnalyticsRows([snapshot], today);
 

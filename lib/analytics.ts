@@ -1,5 +1,19 @@
 import type { DailySnapshot, MLBBatter, MLBGame, MLBPitcher } from "@/types/mlb";
+import type { ScoreOptions } from "@/lib/scores";
 import { calcHitScore, calcHRScore, getColdStreak, calcProjectedStrikeouts } from "@/lib/scores";
+import { getGameWeather } from "@/lib/weather";
+import { getParkData } from "@/lib/parkFactors";
+
+/** Same weather/cfBearing shape the individual game page scores with (LineupSorter.tsx) —
+ *  shared here so Analytics tables stop silently skipping the weather component. */
+async function scoreOptsForGame(game: MLBGame): Promise<ScoreOptions> {
+  const weather = await getGameWeather(game.venueId ?? 0, game.gameDate);
+  const park = getParkData(game.venueId ?? 0);
+  return {
+    weather: weather && !weather.indoor ? weather : undefined,
+    cfBearing: park?.cfBearing,
+  };
+}
 
 export interface PitcherAnalyticsRow {
   id: number;
@@ -384,17 +398,21 @@ function makeBlurb(
 }
 
 /** All batters today scoring ≥60 on the full hit model, sorted by score desc */
-export function buildAiPicksRows(snapshot: DailySnapshot): AiPickRow[] {
+export async function buildAiPicksRows(snapshot: DailySnapshot): Promise<AiPickRow[]> {
   const rows: AiPickRow[] = [];
 
   for (const game of snapshot.games) {
-    const pairs: [MLBBatter[], MLBPitcher | undefined][] = [
-      [game.awayLineup, game.homeStartingPitcher],
-      [game.homeLineup, game.awayStartingPitcher],
+    const scoreOpts = await scoreOptsForGame(game);
+    // Explicit team per lineup — batter.teamAbbreviation is never populated by
+    // the sync pipeline, so falling back to it (as this used to) always fails
+    // over to a hardcoded team and mislabels every home-team batter.
+    const pairs: [MLBBatter[], MLBPitcher | undefined, string][] = [
+      [game.awayLineup, game.homeStartingPitcher, game.awayTeam.abbreviation],
+      [game.homeLineup, game.awayStartingPitcher, game.homeTeam.abbreviation],
     ];
-    for (const [lineup, pitcher] of pairs) {
+    for (const [lineup, pitcher, team] of pairs) {
       for (const batter of lineup) {
-        const score = calcHitScore(batter, pitcher, game.parkFactor);
+        const score = calcHitScore(batter, pitcher, game.parkFactor, scoreOpts);
         if (score < 60) continue;
 
         const prior = batter.last10Games ?? [];
@@ -414,7 +432,7 @@ export function buildAiPicksRows(snapshot: DailySnapshot): AiPickRow[] {
         rows.push({
           id: batter.id,
           name: batter.name,
-          team: batter.teamAbbreviation ?? game.awayTeam.abbreviation,
+          team,
           gamePk: game.gamePk,
           gameTime: formatGameTime(game.gameDate),
           gameTimeIso: game.gameDate,
@@ -474,17 +492,21 @@ export interface BestSluggerRow {
 }
 
 /** All batters today ranked by HR score — for Best Sluggers analytics table */
-export function buildBestSluggersRows(snapshot: DailySnapshot): BestSluggerRow[] {
+export async function buildBestSluggersRows(snapshot: DailySnapshot): Promise<BestSluggerRow[]> {
   const rows: BestSluggerRow[] = [];
 
   for (const game of snapshot.games) {
-    const pairs: [MLBBatter[], MLBPitcher | undefined][] = [
-      [game.awayLineup, game.homeStartingPitcher],
-      [game.homeLineup, game.awayStartingPitcher],
+    const scoreOpts = await scoreOptsForGame(game);
+    // Explicit team per lineup — batter.teamAbbreviation is never populated by
+    // the sync pipeline, so relying on it (as this used to) always fell back
+    // to an empty string for every row.
+    const pairs: [MLBBatter[], MLBPitcher | undefined, string][] = [
+      [game.awayLineup, game.homeStartingPitcher, game.awayTeam.abbreviation],
+      [game.homeLineup, game.awayStartingPitcher, game.homeTeam.abbreviation],
     ];
-    for (const [lineup, pitcher] of pairs) {
+    for (const [lineup, pitcher, team] of pairs) {
       for (const batter of lineup) {
-        const hrScore = calcHRScore(batter, pitcher, game.parkFactor);
+        const hrScore = calcHRScore(batter, pitcher, game.parkFactor, scoreOpts);
         const l3ip = pitcher?.last3InningsPitched ?? 0;
         const l3hr = pitcher?.last3HRAllowed ?? 0;
         const szHR = pitcher?.seasonHRAllowed ?? 0;
@@ -497,7 +519,7 @@ export function buildBestSluggersRows(snapshot: DailySnapshot): BestSluggerRow[]
         rows.push({
           id: batter.id,
           name: batter.name,
-          team: batter.teamAbbreviation ?? "",
+          team,
           gamePk: game.gamePk,
           gameTime: formatGameTime(game.gameDate),
           gameTimeIso: game.gameDate,
