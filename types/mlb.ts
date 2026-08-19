@@ -83,10 +83,19 @@ export interface MLBPitcher {
   // HR rate allowed per 9 innings vs each hand (from MLB splits API)
   hrPer9VsLeft?: number;
   hrPer9VsRight?: number;
-  // Per-zone pitch location profile (top 5 zones by frequency)
+  // Per-zone pitch location profile (every zone thrown to, most-frequent first)
   zoneProfile?: PitcherZoneSlot[];
+  // Same, split by the opposing batter's handedness — pitchers often attack a
+  // different zone (and lean on a different pitch) vs lefties than righties.
+  // Computed from the same raw pitch-by-pitch fetch as zoneProfile, no extra request.
+  zoneProfileVsLeft?: PitcherZoneSlot[];
+  zoneProfileVsRight?: PitcherZoneSlot[];
   // Exact pitch-type arsenal (Baseball Savant pitch-arsenal-stats), sample-gated via .pa
   pitchArsenal?: PitchArsenalEntry[];
+  // Hand-specific arsenal, computed from raw pitch data (not the season leaderboard —
+  // it doesn't offer a hand split). No `ba`, only `xba`/`whiff` — see buildHandArsenal.
+  arsenalVsLeft?: PitchArsenalEntry[];
+  arsenalVsRight?: PitchArsenalEntry[];
   // Recent K% (last ~10 days) of the team this pitcher is facing today —
   // pairs with kPct to flag a strikeout-pitcher-vs-strikeout-prone-team spot
   opposingTeamKPct?: number;
@@ -163,6 +172,11 @@ export interface MLBBatter {
   isHome?: boolean;  // true = batter's team is home in today's game
   // Per-zone contact profile (sorted by xBA desc — hot zones first)
   zoneProfile?: BatterZoneSlot[];
+  // Real spray tendency from batted-ball location (hc_x/hc_y), not just an
+  // assumed 100%-pull-by-hand — min 20 batted balls, else undefined.
+  pullPct?: number;
+  straightPct?: number;
+  oppoPct?: number;
   // Exact pitch-type performance (Baseball Savant pitch-arsenal-stats), sample-gated via .pa
   pitchArsenal?: PitchArsenalEntry[];
   // Career head-to-head vs opposing pitcher

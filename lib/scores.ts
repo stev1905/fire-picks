@@ -1,4 +1,4 @@
-import type { MLBBatter, MLBPitcher } from "@/types/mlb";
+import type { MLBBatter, MLBPitcher, PitchArsenalEntry } from "@/types/mlb";
 import type { WeatherData } from "@/lib/weather";
 import { HIT_WEIGHTS, HR_WEIGHTS } from "@/lib/model-weights";
 
@@ -90,21 +90,43 @@ const PITCHER_PITCH_MIN_PA = 15;
 // Batter's split on that exact pitch needs its own sample before it counts —
 // this is the guardrail that stops a 1-PA fluke from swinging the score.
 const BATTER_PITCH_MIN_PA = 10;
+// A hand-specific arsenal (arsenalVsLeft/arsenalVsRight) needs a real season's
+// worth of pitches behind it before it's trusted over the bigger-sample
+// combined arsenal — pitchers often do genuinely attack lefties and righties
+// differently (a different pitch, or the same pitch located differently), but
+// a thin hand-split sample is just noise.
+const MIN_HAND_SPLIT_PITCHES = 150;
+
+/**
+ * Pick the pitcher's arsenal to score against for this specific batter: the
+ * hand-specific split (computed from raw pitch data, see fetchPitcherZoneStats)
+ * when it has enough pitches behind it, else the season-leaderboard-sourced
+ * combined arsenal.
+ */
+function arsenalForBatter(batter: MLBBatter, pitcher: MLBPitcher): PitchArsenalEntry[] {
+  const handArsenal = batter.hand === "L" ? pitcher.arsenalVsLeft
+    : batter.hand === "R" ? pitcher.arsenalVsRight
+    : undefined;
+  const handTotal = handArsenal?.reduce((s, p) => s + p.pitches, 0) ?? 0;
+  return handTotal >= MIN_HAND_SPLIT_PITCHES ? handArsenal! : (pitcher.pitchArsenal ?? []);
+}
 
 /**
  * Derive a pitch matchup score component (0–8, baseline 4) from exact
  * pitch-type arsenal data (Baseball Savant pitch-arsenal-stats via
- * MLBPitcher/MLBBatter.pitchArsenal). Only pitches that are a real, reliably
- * sampled part of the pitcher's arsenal are considered; each is weighted by
- * how often the pitcher actually throws it, so their most-used pitch
- * dominates the signal rather than a single rare/gimmick pitch "reaching."
- * Combines contact quality (xBA) and contact rate (whiff%) on that exact pitch.
+ * MLBPitcher/MLBBatter.pitchArsenal, preferring the pitcher's hand-specific
+ * arsenal against today's batter when reliably sampled — see arsenalForBatter).
+ * Only pitches that are a real, reliably sampled part of the pitcher's arsenal
+ * are considered; each is weighted by how often the pitcher actually throws
+ * it, so their most-used pitch dominates the signal rather than a single
+ * rare/gimmick pitch "reaching." Combines contact quality (xBA) and contact
+ * rate (whiff%) on that exact pitch.
  */
 export function calcPitchMatchup(
   batter: MLBBatter,
   pitcher: MLBPitcher
 ): { earned: number; max: number; value: string } {
-  const pitcherPitches = (pitcher.pitchArsenal ?? [])
+  const pitcherPitches = arsenalForBatter(batter, pitcher)
     .filter((p) => p.usage >= PITCHER_PITCH_MIN_USAGE && p.pa >= PITCHER_PITCH_MIN_PA);
 
   if (pitcherPitches.length === 0 || !batter.pitchArsenal?.length) {
@@ -280,6 +302,32 @@ export function calcHitScoreBreakdown(
     earned: Math.round(park),
     max: 4,
     value: `${parkTier} (${parkFactor.toFixed(2)})`,
+  });
+
+  // 5b. Park Fit (Spray) — small modifier (0–3), distinct from the blanket
+  //     Park Factor above (which model-weights.ts notes has ~zero correlation
+  //     with "got a hit"). This instead asks a narrower, better-grounded
+  //     question: does *this batter's own* spray tendency (real pull/straight/
+  //     oppo split, min 20 batted balls) actually reach this specific park's
+  //     short side? A short fence only helps a batter who can actually reach
+  //     it — reusing the same distance scale as HR Score's pull-distance mod.
+  let parkFitScore = 0;
+  let parkFitValue = "—";
+  if (opts.lf !== undefined && opts.rf !== undefined &&
+      batter.pullPct !== undefined && batter.straightPct !== undefined && batter.oppoPct !== undefined) {
+    const pullDist = batter.hand === "L" ? opts.rf : batter.hand === "R" ? opts.lf : (opts.lf + opts.rf) / 2;
+    const oppoDist = batter.hand === "L" ? opts.lf : batter.hand === "R" ? opts.rf : (opts.lf + opts.rf) / 2;
+    const distScore3 = (d: number) => clamp(((365 - d) / 65) * 3, 3);
+    parkFitScore =
+      (distScore3(pullDist) * batter.pullPct + 1.5 * batter.straightPct + distScore3(oppoDist) * batter.oppoPct) / 100;
+    const side = batter.hand === "L" ? "RF" : batter.hand === "R" ? "LF" : "avg";
+    parkFitValue = `${batter.pullPct.toFixed(0)}% pull → ${pullDist}ft ${side}`;
+  }
+  components.push({
+    label: "Park Fit (Spray)",
+    earned: Math.round(parkFitScore),
+    max: 3,
+    value: parkFitValue,
   });
 
   // 6. Pitcher H/9 rate (0–HIT_WEIGHTS.pitcherH)
@@ -467,7 +515,7 @@ export function calcHitScoreBreakdown(
   }
 
   const total = Math.min(100, Math.max(0, Math.round(
-    form + consistencyScore + matchup + homeAwayScore + streakScore + park + pitcherScore + pitcherSplitScore +
+    form + consistencyScore + matchup + homeAwayScore + streakScore + park + parkFitScore + pitcherScore + pitcherSplitScore +
     (opts.weather && opts.cfBearing !== undefined ? components.find(c => c.label === "Wind & Weather")!.earned : 0) +
     xBAScore + hardHitScore + h2hScore + pitchMatchupScore + momentumMod + slotMod
   )));
@@ -560,7 +608,13 @@ export function calcHRScoreBreakdown(
     value: `${parkTierHR} (${parkFactor.toFixed(2)})`,
   });
 
-  // 5. Pull-side field distance (0–7, based on batter hand)
+  // 5. Pull-side field distance (0–7, based on batter hand) — blended by the
+  //    batter's REAL spray tendency when we have it (pullPct/straightPct/
+  //    oppoPct, from actual batted-ball location, not just an assumed 100%
+  //    pull-by-hand). A batter who only pulls the ball 20% of the time
+  //    shouldn't get full credit (or blame) for the pull-side fence distance.
+  //    Falls back to the old 100%-pull assumption when spray data isn't
+  //    available yet (min 20 batted balls — see fetchBatterZoneProfiles).
   let pullScore = 3; // neutral default
   let pullValue = "—";
   if (opts.lf !== undefined && opts.rf !== undefined) {
@@ -568,11 +622,26 @@ export function calcHRScoreBreakdown(
       batter.hand === "L" ? opts.rf :
       batter.hand === "R" ? opts.lf :
       (opts.lf + opts.rf) / 2; // switch hitter
+    const oppoDist =
+      batter.hand === "L" ? opts.lf :
+      batter.hand === "R" ? opts.rf :
+      (opts.lf + opts.rf) / 2;
     // Scale: 300ft = 7pts (very short), 365ft = 0pts (very deep)
-    pullScore = clamp(((365 - pullDist) / 65) * 7, 7);
+    const distScore = (d: number) => clamp(((365 - d) / 65) * 7, 7);
+    const pullFieldScore = distScore(pullDist);
     const side = batter.hand === "L" ? "RF" : batter.hand === "R" ? "LF" : "avg";
     const tier = pullDist <= 315 ? "short" : pullDist <= 330 ? "avg" : "deep";
-    pullValue = `${pullDist}ft ${side} — ${tier}`;
+
+    if (batter.pullPct !== undefined && batter.straightPct !== undefined && batter.oppoPct !== undefined) {
+      const oppoFieldScore = distScore(oppoDist);
+      const straightScore = 3; // no CF fence-distance data available — neutral
+      pullScore =
+        (pullFieldScore * batter.pullPct + straightScore * batter.straightPct + oppoFieldScore * batter.oppoPct) / 100;
+      pullValue = `${batter.pullPct.toFixed(0)}% pull → ${pullDist}ft ${side} (${tier})`;
+    } else {
+      pullScore = pullFieldScore;
+      pullValue = `${pullDist}ft ${side} — ${tier}`;
+    }
   }
   components.push({
     label: "Pull-Side Distance",
@@ -806,6 +875,20 @@ const PITCHER_ZONE_MIN_PITCHES = 8;
 type ZoneFitMatch = { zone: number; xBA: number; kind: "hot" | "cold" };
 
 /**
+ * Pick the pitcher's zone profile to check for this specific batter: the
+ * hand-specific split when it has enough pitches behind it (same bar as
+ * arsenalForBatter — pitchers often locate differently by batter hand), else
+ * the combined profile.
+ */
+function zoneProfileForBatter(batter: MLBBatter, pitcher: MLBPitcher) {
+  const handProfile = batter.hand === "L" ? pitcher.zoneProfileVsLeft
+    : batter.hand === "R" ? pitcher.zoneProfileVsRight
+    : undefined;
+  const handTotal = handProfile?.reduce((s, z) => s + z.pitches, 0) ?? 0;
+  return handTotal >= MIN_HAND_SPLIT_PITCHES ? handProfile! : (pitcher.zoneProfile ?? []);
+}
+
+/**
  * Finds the strongest overlap between where a batter is hot/cold (by xBA,
  * min 5 pitches seen in that zone) and where the pitcher actually lives —
  * both their most-thrown zones (where they live most) AND their most
@@ -813,7 +896,7 @@ type ZoneFitMatch = { zone: number; xBA: number; kind: "hot" | "cold" };
  * manufacture a fake weak spot). Shared by the card badge and the score.
  */
 function zoneFitCore(batter: MLBBatter, pitcher: MLBPitcher): ZoneFitMatch | null {
-  const inZone = pitcher.zoneProfile?.filter((z) => z.zone >= 1 && z.zone <= 9) ?? [];
+  const inZone = zoneProfileForBatter(batter, pitcher).filter((z) => z.zone >= 1 && z.zone <= 9);
   const batterZones = batter.zoneProfile?.filter((z) => z.zone >= 1 && z.zone <= 9 && z.pitches >= 5);
   if (!inZone.length || !batterZones?.length) return null;
 

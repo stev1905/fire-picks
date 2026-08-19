@@ -157,7 +157,112 @@ type PitcherZoneStatsResult = {
   whiffPct: number;
   kPct: number;
   zoneProfile: PitcherZoneSlot[];
+  zoneProfileVsLeft: PitcherZoneSlot[];
+  zoneProfileVsRight: PitcherZoneSlot[];
+  arsenalVsLeft: PitchArsenalEntry[];
+  arsenalVsRight: PitchArsenalEntry[];
 };
+
+// One accumulator shape, filled twice per pitch: once into the combined
+// totals (unchanged from before), once into the batter-hand-specific bucket
+// (perHand.L or perHand.R) — same raw CSV, already fetched, split for free.
+type ZoneAcc = {
+  pitchTypeCount: Record<string, number>;
+  zoneCount: Record<number, number>;
+  zoneXBASum: Record<number, number>;
+  zoneXBACount: Record<number, number>;
+  totalPitches: number;
+  totalSwings: number;
+  totalWhiffs: number;
+  typeXBASum: Record<string, number>;
+  typeXBACount: Record<string, number>;
+  typeSwings: Record<string, number>;
+  typeWhiffs: Record<string, number>;
+  typeABs: Record<string, Set<string>>;
+};
+
+function newZoneAcc(): ZoneAcc {
+  return {
+    pitchTypeCount: {}, zoneCount: {}, zoneXBASum: {}, zoneXBACount: {},
+    totalPitches: 0, totalSwings: 0, totalWhiffs: 0,
+    typeXBASum: {}, typeXBACount: {}, typeSwings: {}, typeWhiffs: {}, typeABs: {},
+  };
+}
+
+function accumulatePitch(
+  acc: ZoneAcc,
+  p: { ptype: string; zone: number; xba: number; isSwing: boolean; isWhiff: boolean; abKey: string | null },
+) {
+  acc.totalPitches++;
+  acc.pitchTypeCount[p.ptype] = (acc.pitchTypeCount[p.ptype] ?? 0) + 1;
+
+  if (p.zone > 0) {
+    acc.zoneCount[p.zone] = (acc.zoneCount[p.zone] ?? 0) + 1;
+    if (!isNaN(p.xba)) {
+      acc.zoneXBASum[p.zone]   = (acc.zoneXBASum[p.zone]   ?? 0) + p.xba;
+      acc.zoneXBACount[p.zone] = (acc.zoneXBACount[p.zone] ?? 0) + 1;
+    }
+  }
+  if (!isNaN(p.xba)) {
+    acc.typeXBASum[p.ptype]   = (acc.typeXBASum[p.ptype]   ?? 0) + p.xba;
+    acc.typeXBACount[p.ptype] = (acc.typeXBACount[p.ptype] ?? 0) + 1;
+  }
+  if (p.isSwing) {
+    acc.totalSwings++;
+    acc.typeSwings[p.ptype] = (acc.typeSwings[p.ptype] ?? 0) + 1;
+  }
+  if (p.isWhiff) {
+    acc.totalWhiffs++;
+    acc.typeWhiffs[p.ptype] = (acc.typeWhiffs[p.ptype] ?? 0) + 1;
+  }
+  if (p.abKey) {
+    if (!acc.typeABs[p.ptype]) acc.typeABs[p.ptype] = new Set();
+    acc.typeABs[p.ptype].add(p.abKey);
+  }
+}
+
+function buildZoneProfile(acc: ZoneAcc): PitcherZoneSlot[] {
+  if (acc.totalPitches === 0) return [];
+  return Object.entries(acc.zoneCount)
+    .map(([z, count]) => {
+      const zone = parseInt(z);
+      const n = acc.zoneXBACount[zone] ?? 0;
+      return {
+        zone,
+        pct:     (count / acc.totalPitches) * 100,
+        pitches: count,
+        xBA:     n > 0 ? acc.zoneXBASum[zone] / n : null,
+      };
+    })
+    .sort((a, b) => b.pct - a.pct);
+}
+
+// Arsenal entries computed from raw pitch-level data (as opposed to the
+// season-leaderboard-sourced `pitchArsenal` field) — used for the batter-hand
+// split, which the leaderboard endpoint doesn't offer. `ba` is intentionally
+// left undefined here (a true batting-average-per-pitch-type requires
+// attributing each at-bat's final outcome to its last pitch, which this raw
+// per-pitch loop doesn't reconstruct) — `xba` (averaged per-pitch estimated
+// BA, same technique already used for zone xBA above) is the quality signal
+// consumers should use instead, same as calcPitchMatchup already prefers.
+function buildHandArsenal(acc: ZoneAcc): PitchArsenalEntry[] {
+  if (acc.totalPitches === 0) return [];
+  return Object.entries(acc.pitchTypeCount)
+    .map(([type, pitches]) => {
+      const swings = acc.typeSwings[type] ?? 0;
+      const whiffs = acc.typeWhiffs[type] ?? 0;
+      const xbaN   = acc.typeXBACount[type] ?? 0;
+      return {
+        type,
+        pitches,
+        usage: (pitches / acc.totalPitches) * 100,
+        pa: acc.typeABs[type]?.size ?? 0,
+        xba: xbaN > 0 ? acc.typeXBASum[type] / xbaN : undefined,
+        whiff: swings > 0 ? (whiffs / swings) * 100 : undefined,
+      };
+    })
+    .sort((a, b) => b.usage - a.usage);
+}
 
 export async function fetchPitcherZoneStats(
   pitcherId: number,
@@ -188,14 +293,12 @@ export async function fetchPitcherZoneStats(
     const eventsIdx = idx("events");
     const abNumIdx  = idx("at_bat_number");
     const gameDateIdx = idx("game_date");
+    const standIdx  = idx("stand"); // batter's own handedness — present on every pitch row
 
     if (ptypeIdx < 0 || zoneIdx < 0) return {};
 
-    const pitchTypeCount: Record<string, number> = {};
-    const zoneCount:      Record<number, number> = {};
-    const zoneXBASum:     Record<number, number> = {};
-    const zoneXBACount:   Record<number, number> = {};
-    let totalPitches = 0, totalSwings = 0, totalWhiffs = 0;
+    const combined = newZoneAcc();
+    const perHand: { L: ZoneAcc; R: ZoneAcc } = { L: newZoneAcc(), R: newZoneAcc() };
     let ballsInPlay = 0, hardHits = 0, barrels = 0;
     let xBATotal = 0, xBACount = 0;
     const atBatNums = new Set<string>();
@@ -214,27 +317,25 @@ export async function fetchPitcherZoneStats(
       const events = cols[eventsIdx]?.trim() ?? "";
       const abNum  = cols[abNumIdx]?.trim()  ?? "";
       const gameDate = cols[gameDateIdx]?.trim() ?? "";
+      const stand  = standIdx >= 0 ? cols[standIdx]?.trim().toUpperCase() : "";
 
-      if (!ptype) continue;
-      totalPitches++;
+      // Savant's `year=` URL param is NOT respected server-side on this raw
+      // search endpoint — it silently returns the player's entire Statcast
+      // history (back to 2015+) mixed together. Must filter by game_date
+      // client-side or every stat here is diluted by years-old performance.
+      if (!ptype || !gameDate.startsWith(String(season))) continue;
 
-      pitchTypeCount[ptype] = (pitchTypeCount[ptype] ?? 0) + 1;
-
-      if (!isNaN(zone) && zone > 0) {
-        zoneCount[zone] = (zoneCount[zone] ?? 0) + 1;
-        const xba = parseFloat(xbaStr);
-        if (!isNaN(xba)) {
-          zoneXBASum[zone]   = (zoneXBASum[zone]   ?? 0) + xba;
-          zoneXBACount[zone] = (zoneXBACount[zone] ?? 0) + 1;
-          xBATotal += xba;
-          xBACount++;
-        }
-      }
-
+      const xba = parseFloat(xbaStr);
       const isSwing = ["swinging_strike","swinging_strike_blocked","foul","foul_bunt","foul_tip","hit_into_play"].includes(desc);
       const isWhiff = ["swinging_strike","swinging_strike_blocked"].includes(desc);
-      if (isSwing) totalSwings++;
-      if (isWhiff) totalWhiffs++;
+      const abKey = (abNum && gameDate) ? `${gameDate}:${abNum}` : null;
+
+      accumulatePitch(combined, { ptype, zone, xba, isSwing, isWhiff, abKey });
+      if (stand === "L" || stand === "R") {
+        accumulatePitch(perHand[stand], { ptype, zone, xba, isSwing, isWhiff, abKey });
+      }
+
+      if (!isNaN(xba)) { xBATotal += xba; xBACount++; }
 
       if (desc === "hit_into_play") {
         ballsInPlay++;
@@ -247,63 +348,65 @@ export async function fetchPitcherZoneStats(
       // paired with game_date before going into a season-spanning Set —
       // otherwise at-bat #1 from every start collapses into one entry,
       // undercounting the denominator and badly inflating K%.
-      if (abNum && gameDate) {
-        const abKey = `${gameDate}:${abNum}`;
+      if (abKey) {
         atBatNums.add(abKey);
         if (events === "strikeout") strikeoutABs.add(abKey);
       }
     }
 
-    if (totalPitches === 0) return {};
+    if (combined.totalPitches === 0) return {};
 
     const sumTypes = (set: Set<string>) =>
-      Object.entries(pitchTypeCount)
+      Object.entries(combined.pitchTypeCount)
         .filter(([t]) => set.has(t))
         .reduce((s, [, c]) => s + c, 0);
 
-    // Keep every zone the pitcher actually threw to (at most 9 in-zone + 4 chase
-    // zones exist), sorted most-frequent first. Previously this was capped to
-    // the top 5 by frequency, which silently dropped zones a pitcher gets hurt
-    // in but doesn't throw to often — exactly the kind of vulnerable-but-rare
-    // location a zone-fit check needs to see.
-    const zoneProfile: PitcherZoneSlot[] = Object.entries(zoneCount)
-      .map(([z, count]) => {
-        const zone = parseInt(z);
-        const n = zoneXBACount[zone] ?? 0;
-        return {
-          zone,
-          pct:     (count / totalPitches) * 100,
-          pitches: count,
-          xBA:     n > 0 ? zoneXBASum[zone] / n : null,
-        };
-      })
-      .sort((a, b) => b.pct - a.pct);
-
     return {
-      fastballPct:      (sumTypes(FASTBALL_TYPES) / totalPitches) * 100,
-      breakingPct:      (sumTypes(BREAKING_TYPES) / totalPitches) * 100,
-      offspeedPct:      (sumTypes(OFFSPEED_TYPES) / totalPitches) * 100,
-      whiffPct:         totalSwings > 0 ? (totalWhiffs / totalSwings) * 100 : 0,
+      fastballPct:      (sumTypes(FASTBALL_TYPES) / combined.totalPitches) * 100,
+      breakingPct:      (sumTypes(BREAKING_TYPES) / combined.totalPitches) * 100,
+      offspeedPct:      (sumTypes(OFFSPEED_TYPES) / combined.totalPitches) * 100,
+      whiffPct:         combined.totalSwings > 0 ? (combined.totalWhiffs / combined.totalSwings) * 100 : 0,
       hardHitAllowedPct: ballsInPlay > 0 ? (hardHits / ballsInPlay) * 100 : 0,
       barrelAllowedPct:  ballsInPlay > 0 ? (barrels  / ballsInPlay) * 100 : 0,
       xBAAgainst:        xBACount   > 0 ? xBATotal / xBACount : 0,
       kPct:              atBatNums.size > 0 ? (strikeoutABs.size / atBatNums.size) * 100 : 0,
-      zoneProfile,
+      // Keep every zone the pitcher actually threw to (at most 9 in-zone + 4
+      // chase zones exist), sorted most-frequent first — a zone-fit check
+      // needs to see vulnerable-but-rare zones, not just the busiest ones.
+      zoneProfile:        buildZoneProfile(combined),
+      zoneProfileVsLeft:  buildZoneProfile(perHand.L),
+      zoneProfileVsRight: buildZoneProfile(perHand.R),
+      arsenalVsLeft:  buildHandArsenal(perHand.L),
+      arsenalVsRight: buildHandArsenal(perHand.R),
     };
   } catch {
     return {};
   }
 }
 
-// ─── Batter Zone Profiles (Baseball Savant statcast_search) ───────────────────
+// ─── Batter Zone Profiles + Spray Tendency (Baseball Savant statcast_search) ──
 // Batch-fetches all batters in a game in one HTTP request and returns a per-batter
-// map of zone contact profiles (xBA by zone, sorted hot→cold).
+// zone contact profile (xBA by zone, sorted hot→cold) plus real pull/straight/
+// oppo tendency derived from batted-ball landing coordinates (hc_x/hc_y) —
+// same raw rows, no extra request. Spray angle formula + the 17° bucket
+// threshold were calibrated against a known real Pull/Straight/Oppo split
+// (Steven Kwan, 2026: 34.6/36.3/29.1) pulled from Savant's own UI; computed
+// ~32/35/33 — close, not exact (Savant's own bucketing isn't public), but the
+// closest available approximation without needing a new data source.
+export type BatterSprayProfile = {
+  zoneProfile: BatterZoneSlot[];
+  pullPct?: number;
+  straightPct?: number;
+  oppoPct?: number;
+};
+
+const SPRAY_ANGLE_THRESHOLD = 17; // degrees off center — beyond this = pull/oppo, else straight
 
 export async function fetchBatterZoneProfiles(
   batterIds: number[],
   season: number,
-): Promise<Map<number, BatterZoneSlot[]>> {
-  const map = new Map<number, BatterZoneSlot[]>();
+): Promise<Map<number, BatterSprayProfile>> {
+  const map = new Map<number, BatterSprayProfile>();
   if (batterIds.length === 0) return map;
   try {
     const idParams = batterIds.map((id) => `batters_lookup%5B%5D=${id}`).join("&");
@@ -322,25 +425,54 @@ export async function fetchBatterZoneProfiles(
     const batterIdx = header.indexOf("batter");
     const zoneIdx   = header.indexOf("zone");
     const xbaIdx    = header.indexOf("estimated_ba_using_speedangle");
+    const gameDateIdx = header.indexOf("game_date");
+    const typeIdx   = header.indexOf("type"); // B/S/X pitch-result type — X = ball in play
+    const hcXIdx    = header.indexOf("hc_x");
+    const hcYIdx    = header.indexOf("hc_y");
+    const standIdx  = header.indexOf("stand"); // batter's own handedness
     if (batterIdx < 0 || zoneIdx < 0) return map;
 
     // Accumulate xBA per (batter, zone)
-    type Acc = { xbaSum: number; contacts: number; total: number };
-    const acc = new Map<string, Acc>();
+    type ZoneEntryAcc = { xbaSum: number; contacts: number; total: number };
+    const acc = new Map<string, ZoneEntryAcc>();
+    // Spray direction per batter — pull/straight/oppo counts from batted-ball location
+    const spray = new Map<number, { pull: number; straight: number; oppo: number }>();
 
     for (const line of lines.slice(1)) {
       if (!line.trim()) continue;
       const cols     = splitCSVLine(line);
       const batterId = parseInt(cols[batterIdx] ?? "");
       const zone     = parseInt(cols[zoneIdx]   ?? "");
-      if (isNaN(batterId) || isNaN(zone) || zone < 1) continue;
+      const gameDate = cols[gameDateIdx]?.trim() ?? "";
+      // Same server-side bug as fetchPitcherZoneStats: `year=` is ignored, so
+      // filter to the target season by game_date or every stat here mixes in
+      // the batter's entire career history.
+      if (isNaN(batterId) || !gameDate.startsWith(String(season))) continue;
 
-      const key   = `${batterId}:${zone}`;
-      const entry = acc.get(key) ?? { xbaSum: 0, contacts: 0, total: 0 };
-      entry.total++;
-      const xba = parseFloat(cols[xbaIdx]?.trim() ?? "");
-      if (!isNaN(xba)) { entry.xbaSum += xba; entry.contacts++; }
-      acc.set(key, entry);
+      if (!isNaN(zone) && zone >= 1) {
+        const key   = `${batterId}:${zone}`;
+        const entry = acc.get(key) ?? { xbaSum: 0, contacts: 0, total: 0 };
+        entry.total++;
+        const xba = parseFloat(cols[xbaIdx]?.trim() ?? "");
+        if (!isNaN(xba)) { entry.xbaSum += xba; entry.contacts++; }
+        acc.set(key, entry);
+      }
+
+      if (typeIdx >= 0 && cols[typeIdx]?.trim() === "X" && hcXIdx >= 0 && hcYIdx >= 0) {
+        const hcX = parseFloat(cols[hcXIdx]?.trim() ?? "");
+        const hcY = parseFloat(cols[hcYIdx]?.trim() ?? "");
+        const stand = standIdx >= 0 ? cols[standIdx]?.trim().toUpperCase() : "";
+        if (!isNaN(hcX) && !isNaN(hcY) && (stand === "L" || stand === "R")) {
+          const angle = (Math.atan2(hcX - 125.42, 198.27 - hcY) * 180) / Math.PI;
+          const s = spray.get(batterId) ?? { pull: 0, straight: 0, oppo: 0 };
+          const pulled = stand === "L" ? angle >= SPRAY_ANGLE_THRESHOLD : angle <= -SPRAY_ANGLE_THRESHOLD;
+          const oppo   = stand === "L" ? angle <= -SPRAY_ANGLE_THRESHOLD : angle >= SPRAY_ANGLE_THRESHOLD;
+          if (pulled) s.pull++;
+          else if (oppo) s.oppo++;
+          else s.straight++;
+          spray.set(batterId, s);
+        }
+      }
     }
 
     // Build per-batter sorted zone profile (min 3 contacts for reliable xBA)
@@ -354,8 +486,17 @@ export async function fetchBatterZoneProfiles(
       byBatter.get(batterId)!.push({ zone, xBA: xbaSum / contacts, pitches: total });
     }
 
-    for (const [id, slots] of byBatter.entries()) {
-      map.set(id, slots.sort((a, b) => b.xBA - a.xBA));
+    const allBatterIds = new Set([...byBatter.keys(), ...spray.keys()]);
+    for (const id of allBatterIds) {
+      const zoneProfile = (byBatter.get(id) ?? []).sort((a, b) => b.xBA - a.xBA);
+      const s = spray.get(id);
+      const total = s ? s.pull + s.straight + s.oppo : 0;
+      map.set(id, {
+        zoneProfile,
+        pullPct:     total >= 20 ? (s!.pull     / total) * 100 : undefined,
+        straightPct: total >= 20 ? (s!.straight / total) * 100 : undefined,
+        oppoPct:     total >= 20 ? (s!.oppo     / total) * 100 : undefined,
+      });
     }
   } catch {
     // optional — return whatever we have
@@ -1025,7 +1166,10 @@ export async function buildDailySnapshot(date: string): Promise<DailySnapshot> {
         last10Games: [],
         ...batterStatsMap[p.id],
         isHome,
-        zoneProfile: batterZoneMap.get(p.id),
+        zoneProfile:  batterZoneMap.get(p.id)?.zoneProfile,
+        pullPct:      batterZoneMap.get(p.id)?.pullPct,
+        straightPct:  batterZoneMap.get(p.id)?.straightPct,
+        oppoPct:      batterZoneMap.get(p.id)?.oppoPct,
       });
 
       const buildPitcher = (
