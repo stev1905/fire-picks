@@ -198,18 +198,24 @@ export function calcHitScoreBreakdown(
   const components: ScoreComponent[] = [];
 
   // 1. Recent AVG form (0–HIT_WEIGHTS.form)
+  //    A batter with no game log yet (true rookie debut, first tracked game)
+  //    shouldn't score a flat 0 here just because there's nothing to compute
+  //    from — same "missing data isn't the worst case" principle as the
+  //    pitcher H/9 neutral default below.
   const W_FORM = HIT_WEIGHTS.form; // 20
+  const hasRecentGames = batter.last10Games.length > 0;
   const formRaw = (batter.last10AVG / 0.380) * (W_FORM * 0.65) + (batter.last3AVG / 0.480) * (W_FORM * 0.35);
-  const form = clamp(formRaw, W_FORM);
+  const form = hasRecentGames ? clamp(formRaw, W_FORM) : W_FORM / 2;
   components.push({
     label: "Recent AVG (L3/L10)",
     earned: Math.round(form),
     max: W_FORM,
-    value: `${fmt(batter.last3AVG)} / ${fmt(batter.last10AVG)}`,
+    value: hasRecentGames ? `${fmt(batter.last3AVG)} / ${fmt(batter.last10AVG)}` : "no game log — neutral",
   });
 
   // 2. Hit consistency — prefer hitRate20 (3× more predictive than hitRate10)
-  //    Falls back to hitRate10 (from last10Games) when hitRate20 not available.
+  //    Falls back to hitRate10 (from last10Games) when hitRate20 not available,
+  //    and to a neutral midpoint (not 0) when there's no game log at all.
   const W_CONS = HIT_WEIGHTS.consistency; // 18
   let consistencyLabel: string;
   let consistencyScore: number;
@@ -219,9 +225,14 @@ export function calcHitScoreBreakdown(
     consistencyLabel = `${gamesWithHit}/20 games (L20)`;
   } else {
     const gp = batter.last10Games.length;
-    const hitsIn10 = gp > 0 ? batter.last10Games.filter((g) => g.hits > 0).length : 0;
-    consistencyScore = gp > 0 ? clamp((hitsIn10 / gp) * W_CONS, W_CONS) : 0;
-    consistencyLabel = `${hitsIn10}/${gp} games (L10)`;
+    if (gp > 0) {
+      const hitsIn10 = batter.last10Games.filter((g) => g.hits > 0).length;
+      consistencyScore = clamp((hitsIn10 / gp) * W_CONS, W_CONS);
+      consistencyLabel = `${hitsIn10}/${gp} games (L10)`;
+    } else {
+      consistencyScore = W_CONS / 2;
+      consistencyLabel = "no game log — neutral";
+    }
   }
   components.push({
     label: "Hit Consistency",
@@ -230,28 +241,32 @@ export function calcHitScoreBreakdown(
     value: consistencyLabel,
   });
 
-  // 3. Matchup vs pitcher hand (0–HIT_WEIGHTS.vsHand)
-  //    Bug fix: when avgVsHand is 0/null, fall back to seasonAVG instead of scoring 0.
+  // 3. Matchup vs pitcher hand (0–HIT_WEIGHTS.vsHand) — the single biggest
+  //    weight, so getting the missing-data case right matters most here.
+  //    Falls back split → seasonAVG → neutral midpoint (not 0) when the
+  //    batter has no usable average at all (true blank slate).
   const W_VSHAND = HIT_WEIGHTS.vsHand; // 16
   let matchup: number;
   if (pitcher) {
     const rawMatchupAvg = pitcher.hand === "L" ? batter.avgVsLeft : batter.avgVsRight;
     // Use seasonAVG as fallback when split is 0 (missing data, not actually .000)
     const matchupAvg = rawMatchupAvg > 0 ? rawMatchupAvg : batter.seasonAVG;
-    matchup = clamp((matchupAvg / 0.360) * W_VSHAND, W_VSHAND);
+    matchup = matchupAvg > 0 ? clamp((matchupAvg / 0.360) * W_VSHAND, W_VSHAND) : W_VSHAND / 2;
     components.push({
       label: `AVG vs ${pitcher.hand === "L" ? "LHP" : "RHP"}`,
       earned: Math.round(matchup),
       max: W_VSHAND,
-      value: rawMatchupAvg > 0 ? fmt(rawMatchupAvg) : `${fmt(batter.seasonAVG)} (season, no split)`,
+      value: rawMatchupAvg > 0 ? fmt(rawMatchupAvg)
+        : matchupAvg > 0 ? `${fmt(batter.seasonAVG)} (season, no split)`
+        : "no history — neutral",
     });
   } else {
-    matchup = clamp((batter.seasonAVG / 0.340) * (W_VSHAND * 0.7), W_VSHAND);
+    matchup = batter.seasonAVG > 0 ? clamp((batter.seasonAVG / 0.340) * (W_VSHAND * 0.7), W_VSHAND) : W_VSHAND / 2;
     components.push({
       label: "Season AVG (no SP)",
       earned: Math.round(matchup),
       max: W_VSHAND,
-      value: fmt(batter.seasonAVG),
+      value: batter.seasonAVG > 0 ? fmt(batter.seasonAVG) : "no history — neutral",
     });
   }
 
@@ -410,30 +425,27 @@ export function calcHitScoreBreakdown(
     components.push({ label: "Wind & Weather", earned: wx, max: 8, value: wxLabel });
   }
 
-  // 8. xBA (0–HIT_WEIGHTS.xBA)
+  // 8. xBA (0–HIT_WEIGHTS.xBA) — neutral midpoint (not 0) when Statcast data
+  //    isn't available yet, same missing-data principle as everywhere else.
   const W_XBA = HIT_WEIGHTS.xBA; // 9
-  let xBAScore = 0;
-  if (batter.xBA !== undefined && batter.xBA > 0) {
-    xBAScore = clamp((batter.xBA / 0.340) * W_XBA, W_XBA);
-  }
+  const hasXBA = batter.xBA !== undefined && batter.xBA > 0;
+  const xBAScore = hasXBA ? clamp((batter.xBA! / 0.340) * W_XBA, W_XBA) : W_XBA / 2;
   components.push({
     label: "xBA (Statcast)",
     earned: Math.round(xBAScore),
     max: W_XBA,
-    value: batter.xBA !== undefined ? fmt(batter.xBA) : "—",
+    value: hasXBA ? fmt(batter.xBA!) : "no data — neutral",
   });
 
   // 9. Hard Hit % (0–HIT_WEIGHTS.hardHit)
   const W_HH = HIT_WEIGHTS.hardHit; // 3
-  let hardHitScore = 0;
-  if (batter.hardHitPct !== undefined && batter.hardHitPct > 0) {
-    hardHitScore = clamp((batter.hardHitPct / 55) * W_HH, W_HH);
-  }
+  const hasHardHit = batter.hardHitPct !== undefined && batter.hardHitPct > 0;
+  const hardHitScore = hasHardHit ? clamp((batter.hardHitPct! / 55) * W_HH, W_HH) : W_HH / 2;
   components.push({
     label: "Hard Hit %",
     earned: Math.round(hardHitScore),
     max: W_HH,
-    value: batter.hardHitPct !== undefined ? `${batter.hardHitPct.toFixed(1)}%` : "—",
+    value: hasHardHit ? `${batter.hardHitPct!.toFixed(1)}%` : "no data — neutral",
   });
 
   // 10. H2H vs current pitcher (0–HIT_WEIGHTS.h2h, min 5 AB)
