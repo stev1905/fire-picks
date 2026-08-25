@@ -482,12 +482,22 @@ export function calcHitScoreBreakdown(
     components.push({ label: "Matchup (Pitch + Zone)", earned: Math.round(earned), max: 8, value });
   }
 
-  // 12. Momentum — bounce-back bonus (hitless exactly yesterday, quality hitter)
-  //     or cold streak penalty (2+ consecutive hitless games).
-  //     Data: coldStreak=1 + score ≥60 shows +7.7pp lift; coldStreak ≥5 shows -16pp drag.
+  // 12. Momentum — bounce-back bonus, scaled by the batter's underlying form
+  //     (hitRate20), for a hitless streak of 1-2 games. Past 2 games, no
+  //     modifier at all.
+  //     30-day backtest (2026-08-25): hot hitters (hitRate20≥65%) hitless 1
+  //     OR 2 games still hit 67-70% next game — well above their own 65.5%
+  //     baseline right after a hit, so a 2-game skid isn't a real warning
+  //     sign for a hot hitter. And across every hitRate20 tier, hit rate does
+  //     NOT decline as the hitless streak extends further (3+ games sits
+  //     flat-to-higher than 1-2 games in every tier) — so the previous
+  //     escalating penalty (up to -5 at 7+ games) was penalizing a pattern
+  //     the data doesn't actually show. Tested via scripts/backtest-accuracy.mjs
+  //     (V7): score≥70 accuracy 76.2% vs 75.9% prod, calibration spread 38.7pp
+  //     vs 35.3pp — a real improvement, not just a plausible-looking one.
   const coldStreak = getColdStreak(batter);
   let momentumMod = 0;
-  if (coldStreak === 1) {
+  if (coldStreak >= 1 && coldStreak <= 2) {
     const rate = batter.hitRate20 ?? batter.hitRate10 ??
       (batter.last10Games.length > 0
         ? batter.last10Games.filter(g => g.hits > 0).length / batter.last10Games.length
@@ -495,22 +505,15 @@ export function calcHitScoreBreakdown(
     if (rate >= 0.65)      { momentumMod = 3; }
     else if (rate >= 0.50) { momentumMod = 2; }
     else if (rate >= 0.40) { momentumMod = 1; }
-    if (momentumMod > 0) {
+    else if (rate < 0.30)  { momentumMod = -1; }
+    if (momentumMod !== 0) {
       components.push({
-        label: "Bounce-back",
+        label: momentumMod > 0 ? "Bounce-back" : "Cold Streak",
         earned: momentumMod,
-        max: 3,
-        value: `hitless yday, rate ${Math.round(rate * 100)}% (+${momentumMod} pts)`,
+        max: momentumMod > 0 ? 3 : 0,
+        value: `${coldStreak} hitless, rate ${Math.round(rate * 100)}% (${momentumMod > 0 ? "+" : ""}${momentumMod} pts)`,
       });
     }
-  } else if (coldStreak >= 2) {
-    momentumMod = coldStreak >= 7 ? -5 : coldStreak >= 5 ? -4 : coldStreak >= 3 ? -2 : -1;
-    components.push({
-      label: "Cold Streak",
-      earned: momentumMod,
-      max: 0,
-      value: `${coldStreak} hitless games (${momentumMod} pts)`,
-    });
   }
 
   // 13. Lineup slot modifier — bottom-order batters get fewer ABs/game so lower hit probability.

@@ -168,13 +168,32 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0, scoreOpt
     SLG: g.slg,
   }));
 
+  // Prefer hitRate20 (20-game hit rate) over the raw last-10-games count for
+  // the "hot/cold" badge — a 30-day backtest showed hitRate20 is by far the
+  // strongest individual predictor of a hit (r=+0.25), more than double
+  // anything else measured, while the raw L10 count is weak and non-monotonic
+  // on its own (r=+0.05, and games-with-a-hit bands weren't even ordered
+  // correctly in the data). Falls back to the L10 display when hitRate20
+  // isn't populated yet.
+  const hasHitRate20 = batter.hitRate20 !== undefined && batter.hitRate20 > 0;
   const hitsIn10  = batter.last10Games.filter((g) => g.hits > 0).length;
   const hasLast10 = batter.last10Games.length > 0;
-  const hitLabel  =
-    hitsIn10 <= 2 ? { color: "text-red-500 dark:text-red-400",    icon: "🧊" }
-    : hitsIn10 <= 4 ? { color: "text-orange-500 dark:text-orange-400", icon: "❄️" }
-    : hitsIn10 >= 8 ? { color: "text-green-500 dark:text-green-400",   icon: "🔥" }
-    : { color: "text-muted-foreground", icon: null };
+  const consistencyLabel = hasHitRate20
+    ? `${Math.round(batter.hitRate20! * 20)}/20 w/hit`
+    : `${hitsIn10}/${batter.last10Games.length} w/hit`;
+  const hitLabel = hasHitRate20
+    ? (
+      batter.hitRate20! <= 0.30 ? { color: "text-red-500 dark:text-red-400",    icon: "🧊" }
+      : batter.hitRate20! <= 0.40 ? { color: "text-orange-500 dark:text-orange-400", icon: "❄️" }
+      : batter.hitRate20! >= 0.65 ? { color: "text-green-500 dark:text-green-400",   icon: "🔥" }
+      : { color: "text-muted-foreground", icon: null }
+    )
+    : (
+      hitsIn10 <= 2 ? { color: "text-red-500 dark:text-red-400",    icon: "🧊" }
+      : hitsIn10 <= 4 ? { color: "text-orange-500 dark:text-orange-400", icon: "❄️" }
+      : hitsIn10 >= 8 ? { color: "text-green-500 dark:text-green-400",   icon: "🔥" }
+      : { color: "text-muted-foreground", icon: null }
+    );
 
   return (
     <Card>
@@ -194,15 +213,18 @@ export function BatterCard({ batter, opposingPitcher, parkFactor = 1.0, scoreOpt
                 🔥 {batter.hittingStreak}-game streak
               </span>
             )}
-            {hasLast10 && (
-              <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
-                hitsIn10 <= 2 ? "bg-red-500/15 text-red-700 dark:text-red-400" :
-                hitsIn10 <= 4 ? "bg-orange-500/15 text-orange-700 dark:text-orange-400" :
-                hitsIn10 >= 8 ? "bg-green-500/15 text-green-700 dark:text-green-400" :
-                "bg-muted text-muted-foreground"
-              }`}>
+            {(hasHitRate20 || hasLast10) && (
+              <span
+                title={hasHitRate20 ? "20-game hit rate — strongest single predictor in our backtest" : "Last 10 games"}
+                className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
+                  hitLabel.color === "text-red-500 dark:text-red-400" ? "bg-red-500/15 text-red-700 dark:text-red-400" :
+                  hitLabel.color === "text-orange-500 dark:text-orange-400" ? "bg-orange-500/15 text-orange-700 dark:text-orange-400" :
+                  hitLabel.color === "text-green-500 dark:text-green-400" ? "bg-green-500/15 text-green-700 dark:text-green-400" :
+                  "bg-muted text-muted-foreground"
+                }`}
+              >
                 {hitLabel.icon && <span className="mr-0.5">{hitLabel.icon}</span>}
-                {hitsIn10}/{batter.last10Games.length} w/hit
+                {consistencyLabel}
               </span>
             )}
             {coldStreak >= 3 && !bounceHit && (

@@ -61,6 +61,23 @@ const HIT_WEIGHTS_V4_STREAK_TRIM = {
   h2h:         9,
 };
 
+// ── V5 — same streak trim as V4, PLUS shift weight from vsHand into
+// consistency. Informed by this run's own correlations: hitRate20 (r=+0.250)
+// is more than double avgVsHand's r=+0.109, yet carries less than half the
+// weight (9 vs 23). Testing whether closing that gap actually helps, not
+// assuming it does — same discipline as every other variant here.
+const HIT_WEIGHTS_V5_CONSISTENCY_UP = {
+  form:        2,
+  consistency: 18,
+  vsHand:      18,
+  homeAway:    4,
+  streak:      3,
+  xBA:         4,
+  hardHit:     2,
+  pitcherH:    25,
+  h2h:         9,
+};
+
 const HR_WEIGHTS_PROD = {
   recentHR:  20,
   seasonSLG: 9,
@@ -80,6 +97,7 @@ function verifyWeights(w, name, expected) {
 }
 verifyWeights(HIT_WEIGHTS_PROD, "HIT_PROD", 85);
 verifyWeights(HIT_WEIGHTS_V4_STREAK_TRIM, "HIT_V4", 85);
+verifyWeights(HIT_WEIGHTS_V5_CONSISTENCY_UP, "HIT_V5", 85);
 verifyWeights(HR_WEIGHTS_PROD, "HR_PROD", 85);
 
 function clamp(v, max) { return Math.min(max, Math.max(0, v)); }
@@ -153,19 +171,44 @@ function getColdStreak(games) {
   return cold;
 }
 
+// Batter's overall contact rate — 100 minus the usage-weighted whiff% across
+// their exact-pitch-type arsenal (batter.pitchArsenal, same field used by
+// calcPitchMatchup). Not currently used anywhere in either score.
+function batterContactPct(batter) {
+  const entries = (batter.pitchArsenal ?? []).filter((e) => e.whiff !== undefined && e.pitches >= 20);
+  const totalPitches = entries.reduce((s, e) => s + e.pitches, 0);
+  if (totalPitches < 50) return null;
+  const weightedWhiff = entries.reduce((s, e) => s + e.whiff * e.pitches, 0) / totalPitches;
+  return 100 - weightedWhiff;
+}
+
+// Pitcher's Zone% — % of all pitches thrown inside the strike zone (zones
+// 1-9), derived from pitcher.zoneProfile (already fetched for zone-fit).
+// Not currently used anywhere in either score (the old zonePct/chaseInducePct
+// fields were dead code and removed earlier this session).
+function pitcherZonePct(pitcher) {
+  const zp = pitcher.zoneProfile ?? [];
+  const totalPct = zp.reduce((s, z) => s + z.pct, 0);
+  if (totalPct < 50) return null; // incomplete profile — don't trust it
+  return zp.filter((z) => z.zone >= 1 && z.zone <= 9).reduce((s, z) => s + z.pct, 0);
+}
+
 // ── Replicate production calcHitScoreBreakdown with configurable weights ──────
-function calcHitScore(batter, pitcher, parkFactor, snapshotDate, W) {
+function calcHitScore(batter, pitcher, parkFactor, snapshotDate, W, flags = {}) {
   const priorGames = (batter.last10Games ?? []).filter(g => g.date !== snapshotDate);
   const recent3    = priorGames.slice(0, 3);
   const recent10   = priorGames.slice(0, 10);
 
+  const recent6 = priorGames.slice(0, 6);
   const windowAvg = (games) => {
     const ab = games.reduce((s, g) => s + (g.atBats ?? 0), 0);
     const h  = games.reduce((s, g) => s + (g.hits  ?? 0), 0);
     return ab > 0 ? h / ab : 0;
   };
   const last3AVG   = windowAvg(recent3);
+  const last6AVG   = windowAvg(recent6);
   const last10AVG  = windowAvg(recent10);
+  const hitRate10  = priorGames.length > 0 ? priorGames.slice(0, 10).filter(g => (g.hits ?? 0) > 0).length / Math.min(10, priorGames.length) : null;
 
   let consistencyScore;
   if (batter.hitRate20 > 0) {
@@ -182,7 +225,12 @@ function calcHitScore(batter, pitcher, parkFactor, snapshotDate, W) {
   let matchup = 0;
   if (pitcher) {
     const rawAvg = pitcher.hand === "L" ? batter.avgVsLeft : batter.avgVsRight;
-    const matchupAvg = rawAvg > 0 ? rawAvg : (batter.seasonAVG ?? 0);
+    let matchupAvg;
+    if (flags.blendSeasonAVG && rawAvg > 0 && (batter.seasonAVG ?? 0) > 0) {
+      matchupAvg = rawAvg * 0.6 + batter.seasonAVG * 0.4;
+    } else {
+      matchupAvg = rawAvg > 0 ? rawAvg : (batter.seasonAVG ?? 0);
+    }
     matchup = clamp((matchupAvg / 0.360) * W.vsHand, W.vsHand);
   } else {
     matchup = clamp(((batter.seasonAVG ?? 0) / 0.340) * (W.vsHand * 0.7), W.vsHand);
@@ -209,13 +257,16 @@ function calcHitScore(batter, pitcher, parkFactor, snapshotDate, W) {
   // Pitcher H/9 — recent-then-season fallback, neutral default (not 0) when no data at all
   let pitcherScore = W.pitcherH / 2;
   let h9 = null;
+  let h9Source = null; // "recent" | "season" | null — "season" or null ≈ bullpen/spot-start game
+  const recentReliable = (pitcher?.last3InningsPitched ?? 0) >= MIN_RELIABLE_RECENT_IP;
   if (pitcher) {
-    const recentReliable = (pitcher.last3InningsPitched ?? 0) >= MIN_RELIABLE_RECENT_IP;
     const seasonReliable = (pitcher.seasonInningsPitched ?? 0) >= MIN_RELIABLE_SEASON_IP;
     if (recentReliable) {
       h9 = (pitcher.last3HitsAllowed / pitcher.last3InningsPitched) * 9;
+      h9Source = "recent";
     } else if (seasonReliable) {
       h9 = (pitcher.seasonHitsAllowed / pitcher.seasonInningsPitched) * 9;
+      h9Source = "season";
     }
     if (h9 !== null) pitcherScore = clamp(((h9 - 5.0) / 6.0) * W.pitcherH, W.pitcherH);
   }
@@ -247,14 +298,16 @@ function calcHitScore(batter, pitcher, parkFactor, snapshotDate, W) {
     if ((g.hits ?? 0) === 0) coldStreak++;
     else break;
   }
+  // Bounce-back scaled by hitRate20 for coldStreak 1-2 (adopted from the V7
+  // experiment below — see PROD momentum comment in lib/scores.ts for the
+  // full rationale). No modifier at coldStreak=0 or >=3.
   let momentumMod = 0;
-  if (coldStreak === 1) {
-    const rate = batter.hitRate20 ?? (priorGames.length > 0 ? priorGames.filter(g => g.hits > 0).length / priorGames.length : 0);
+  const rate = batter.hitRate20 ?? (priorGames.length > 0 ? priorGames.filter(g => g.hits > 0).length / priorGames.length : 0);
+  if (coldStreak >= 1 && coldStreak <= 2) {
     if (rate >= 0.65) momentumMod = 3;
     else if (rate >= 0.50) momentumMod = 2;
     else if (rate >= 0.40) momentumMod = 1;
-  } else if (coldStreak >= 2) {
-    momentumMod = coldStreak >= 7 ? -5 : coldStreak >= 5 ? -4 : coldStreak >= 3 ? -2 : -1;
+    else if (rate < 0.30) momentumMod = -1;
   }
 
   const slot = batter.battingOrder ?? 0;
@@ -266,7 +319,11 @@ function calcHitScore(batter, pitcher, parkFactor, snapshotDate, W) {
     pitchMatchupScore + momentumMod + slotMod
   )));
 
-  return { total, hittingStreak, coldStreak, h9 };
+  return {
+    total, hittingStreak, coldStreak, h9, h9Source,
+    isBullpenGame: !recentReliable, // recent sample too thin to trust — spot start / bullpen game / opener
+    last3AVG, last6AVG, last10AVG, hitRate10,
+  };
 }
 
 // ── Replicate production calcHRScoreBreakdown with configurable weights ───────
@@ -362,6 +419,8 @@ for (const row of rows) {
 
         const hitProd = calcHitScore(batter, pitcher, game.parkFactor ?? 1.0, date, HIT_WEIGHTS_PROD);
         const hitV4   = calcHitScore(batter, pitcher, game.parkFactor ?? 1.0, date, HIT_WEIGHTS_V4_STREAK_TRIM);
+        const hitV5   = calcHitScore(batter, pitcher, game.parkFactor ?? 1.0, date, HIT_WEIGHTS_V5_CONSISTENCY_UP);
+        const hitV6   = calcHitScore(batter, pitcher, game.parkFactor ?? 1.0, date, HIT_WEIGHTS_PROD, { blendSeasonAVG: true });
         const hrProd  = calcHRScore(batter, pitcher, game.parkFactor ?? 1.0, HR_WEIGHTS_PROD);
 
         obs.push({
@@ -370,10 +429,14 @@ for (const row of rows) {
           gotHit, gotHR,
           hitProd: hitProd.total,
           hitV4:   hitV4.total,
+          hitV5:   hitV5.total,
+          hitV6:   hitV6.total,
           hrProd:  hrProd.total,
           streak: hitProd.hittingStreak,
           cold:   hitProd.coldStreak,
           h9:     hitProd.h9,
+          h9Source: hitProd.h9Source,
+          isBullpenGame: hitProd.isBullpenGame,
           hrPer9: hrProd.hrPer9,
           homeAvg: batter.isHome ? (batter.homeAVG ?? null) : (batter.awayAVG ?? null),
           avgVsHand: pitcher ? (pitcher.hand === "L" ? batter.avgVsLeft : batter.avgVsRight) : null,
@@ -381,6 +444,15 @@ for (const row of rows) {
           h2hAVG:  (batter.vsCurrentPitcher?.atBats ?? 0) >= 5 ? batter.vsCurrentPitcher.avg : null,
           last3HR: batter.last3HR ?? null,
           barrelPct: batter.barrelPct ?? null,
+          last3AVG:  hitProd.last3AVG  > 0 ? hitProd.last3AVG  : null,
+          last6AVG:  hitProd.last6AVG  > 0 ? hitProd.last6AVG  : null,
+          last10AVG: hitProd.last10AVG > 0 ? hitProd.last10AVG : null,
+          hitRate10: hitProd.hitRate10,
+          hitRate20: batter.hitRate20 > 0 ? batter.hitRate20 : null,
+          xwOBA:   batter.xwOBA > 0 ? batter.xwOBA : null,
+          seasonAVG: batter.seasonAVG > 0 ? batter.seasonAVG : null,
+          contactPct: batterContactPct(batter),
+          zonePct: pitcher ? pitcherZonePct(pitcher) : null,
         });
       }
     }
@@ -451,7 +523,9 @@ console.log("\n═════════════════════�
 console.log(" 1. SCORE CALIBRATION");
 console.log("═══════════════════════════════════════════════════════════════");
 calibration("hitProd", "gotHit", "Current production weights (PROD)");
-calibration("hitV4", "gotHit", "V4 — streak trimmed 7→3, consistency raised 9→12");
+calibration("hitV4", "gotHit", "V4 — streak trimmed 7→3, consistency raised 9→13");
+calibration("hitV5", "gotHit", "V5 — V4 + vsHand trimmed 23→18, consistency raised 13→18");
+calibration("hitV6", "gotHit", "V6 — PROD weights, but vsHand blends split 60% + seasonAVG 40% (was all-or-nothing fallback) — TESTED, NOT ADOPTED, see below");
 
 console.log("\n═══════════════════════════════════════════════════════════════");
 console.log(" 2. FEATURE CORRELATIONS (point-biserial r vs got_hit)");
@@ -463,6 +537,15 @@ correlations([
   { key: "xBA",       label: "xBA           (xBA       weight=4)" },
   { key: "streak",    label: "hittingStreak (streak    weight=7)" },
   { key: "h9",        label: "pitcher H/9   (pitcherH  weight=25)" },
+  { key: "hitRate20", label: "hitRate20     (consistency weight=9) — L20 hit rate" },
+  { key: "hitRate10", label: "hitRate10     (not currently weighted separately) — L10 hit rate" },
+  { key: "last3AVG",  label: "last3AVG      (form component, part of weight=2)" },
+  { key: "last6AVG",  label: "last6AVG      (not currently used anywhere in the model)" },
+  { key: "last10AVG", label: "last10AVG     (form component, part of weight=2)" },
+  { key: "xwOBA",     label: "xwOBA         (used in HR Score only, weight=8 there — NOT in Hit Score)" },
+  { key: "seasonAVG", label: "seasonAVG     (not directly weighted — feeds vsHand fallback only)" },
+  { key: "contactPct", label: "batter contact% (not in either score — derived from pitchArsenal whiff)" },
+  { key: "zonePct",    label: "pitcher zone%  (not in either score — derived from zoneProfile)" },
 ], "gotHit");
 
 console.log("\n═══════════════════════════════════════════════════════════════");
@@ -519,6 +602,134 @@ for (let c = 0; c <= 8; c++) {
 }
 
 console.log("\n═══════════════════════════════════════════════════════════════");
+console.log(" 5b. HIT-RATE CONSISTENCY BANDS — does '8/10' or '9/10' actually mean something?");
+console.log("═══════════════════════════════════════════════════════════════");
+const hrBands = [
+  { l: "≥ 90% (9-10/10)",  filter: v => v >= 0.90 },
+  { l: "70-89% (7-8/10)",  filter: v => v >= 0.70 && v < 0.90 },
+  { l: "50-69% (5-6/10)",  filter: v => v >= 0.50 && v < 0.70 },
+  { l: "30-49% (3-4/10)",  filter: v => v >= 0.30 && v < 0.50 },
+  { l: "< 30% (0-2/10)",   filter: v => v < 0.30 },
+];
+for (const b of hrBands) {
+  const subset = obs.filter(o => o.hitRate10 !== null && b.filter(o.hitRate10));
+  if (subset.length < 10) continue;
+  const h = subset.filter(o => o.gotHit).length;
+  console.log(`  L10 hit rate ${b.l.padEnd(16)} ${pct(h, subset.length).padStart(6)}  (n=${subset.length})`);
+}
+
+console.log("\n═══════════════════════════════════════════════════════════════");
+console.log(" 5c. STREAK LENGTH BUCKETS — is there a real threshold?");
+console.log("═══════════════════════════════════════════════════════════════");
+const streakBuckets = [
+  { l: "No streak (0)",     filter: v => v === 0 },
+  { l: "1-2 games",         filter: v => v >= 1 && v <= 2 },
+  { l: "3-4 games",         filter: v => v >= 3 && v <= 4 },
+  { l: "5-8 games",         filter: v => v >= 5 && v <= 8 },
+  { l: "9+ games",          filter: v => v >= 9 },
+];
+for (const b of streakBuckets) {
+  const subset = obs.filter(o => b.filter(o.streak));
+  if (subset.length < 10) continue;
+  const h = subset.filter(o => o.gotHit).length;
+  console.log(`  ${b.l.padEnd(18)} ${pct(h, subset.length).padStart(6)}  (n=${subset.length})`);
+}
+
+console.log("\n═══════════════════════════════════════════════════════════════");
+console.log(" 5d. BULLPEN / SPOT-START GAMES — do batters actually do better?");
+console.log("     (isBullpenGame = last-3-starts sample too thin to trust, <9 IP —");
+console.log("      the exact case the pitcherH neutral-default fix targets)");
+console.log("═══════════════════════════════════════════════════════════════");
+for (const b of [
+  { l: "Bullpen/spot-start game", v: true },
+  { l: "Normal starter sample",   v: false },
+]) {
+  const subset = obs.filter(o => o.isBullpenGame === b.v);
+  if (subset.length < 10) continue;
+  const h = subset.filter(o => o.gotHit).length;
+  const avgScore = subset.reduce((a,o) => a + o.hitProd, 0) / subset.length;
+  console.log(`  ${b.l.padEnd(24)} ${pct(h, subset.length).padStart(6)} hit rate  |  avg score ${avgScore.toFixed(0)}  (n=${subset.length})`);
+}
+
+console.log("\n═══════════════════════════════════════════════════════════════");
+console.log(" 5e. HOT BATTER vs TOUGH PITCHER — which one wins when they conflict?");
+console.log("═══════════════════════════════════════════════════════════════");
+const batterTier = (o) => o.hitRate20 === null ? null : o.hitRate20 >= 0.65 ? "Hot" : o.hitRate20 <= 0.40 ? "Cold" : "Neutral";
+const pitcherTier = (o) => o.h9 === null ? null : o.h9 < 7.0 ? "Tough" : o.h9 >= 10.0 ? "Hittable" : "Average";
+const grid = {};
+for (const o of obs) {
+  const bt = batterTier(o), pt = pitcherTier(o);
+  if (!bt || !pt) continue;
+  const key = `${bt}|${pt}`;
+  grid[key] = grid[key] ?? { n: 0, hits: 0 };
+  grid[key].n++;
+  if (o.gotHit) grid[key].hits++;
+}
+console.log("                  Tough Pitcher      Average Pitcher    Hittable Pitcher");
+for (const bt of ["Hot", "Neutral", "Cold"]) {
+  const row = ["Tough", "Average", "Hittable"].map(pt => {
+    const g = grid[`${bt}|${pt}`];
+    return g && g.n >= 10 ? `${pct(g.hits, g.n).padStart(6)} (n=${g.n})` : "   —          ";
+  });
+  console.log(`  ${bt.padEnd(9)}     ${row[0].padEnd(19)}${row[1].padEnd(19)}${row[2]}`);
+}
+
+console.log("\n═══════════════════════════════════════════════════════════════");
+console.log(" 5f. HOT HITTERS WHO WENT COLD — do they actually bounce back?");
+console.log("     batterTier uses hitRate20 (underlying form), crossed against");
+console.log("     CURRENT cold streak (games since their last hit) — tests whether");
+console.log("     a genuinely hot hitter hitless 1-2 games is 'due', or whether");
+console.log("     that's model folklore not backed by the data.");
+console.log("═══════════════════════════════════════════════════════════════");
+const coldGrid = {};
+for (const o of obs) {
+  const bt = batterTier(o);
+  if (!bt) continue;
+  const cb = o.cold === 0 ? "0 (had a hit last game)" : o.cold === 1 ? "1 game hitless" : o.cold === 2 ? "2 games hitless" : "3+ games hitless";
+  const key = `${bt}|${cb}`;
+  coldGrid[key] = coldGrid[key] ?? { n: 0, hits: 0 };
+  coldGrid[key].n++;
+  if (o.gotHit) coldGrid[key].hits++;
+}
+for (const bt of ["Hot", "Neutral", "Cold"]) {
+  console.log(`  ${bt} hitters (hitRate20 ${bt === "Hot" ? "≥65%" : bt === "Cold" ? "≤40%" : "40-65%"}):`);
+  for (const cb of ["0 (had a hit last game)", "1 game hitless", "2 games hitless", "3+ games hitless"]) {
+    const g = coldGrid[`${bt}|${cb}`];
+    if (!g || g.n < 10) { console.log(`    ${cb.padEnd(24)}  n too small`); continue; }
+    console.log(`    ${cb.padEnd(24)}  ${pct(g.hits, g.n).padStart(6)}  (n=${g.n})`);
+  }
+}
+// Findings above led directly to a fix, now live in production (lib/scores.ts):
+console.log("\n  Current PROD momentum modifier at each cold-streak length (updated):");
+console.log("    coldStreak=0: no modifier");
+console.log("    coldStreak=1-2: bounce-back bonus scaled by hitRate20 (+1 to +3), or -1 if hitRate20 < 30%");
+console.log("    coldStreak=3+: no modifier — data showed no tier gets worse from here");
+
+console.log("\n═══════════════════════════════════════════════════════════════");
+console.log(" 5g. BATTER CONTACT% vs PITCHER ZONE% — does a contact hitter feast on a");
+console.log("     zone-pounder, or does a deceptive out-of-zone arm neutralize contact?");
+console.log("═══════════════════════════════════════════════════════════════");
+const contactTier = (v) => v === null ? null : v >= 82 ? "High Contact" : v <= 74 ? "Low Contact" : "Avg Contact";
+const zoneTier = (v) => v === null ? null : v >= 50 ? "Pounds Zone" : v <= 42 ? "Avoids Zone" : "Avg Zone%";
+const cgrid = {};
+for (const o of obs) {
+  const ct = contactTier(o.contactPct), zt = zoneTier(o.zonePct);
+  if (!ct || !zt) continue;
+  const key = `${ct}|${zt}`;
+  cgrid[key] = cgrid[key] ?? { n: 0, hits: 0 };
+  cgrid[key].n++;
+  if (o.gotHit) cgrid[key].hits++;
+}
+console.log("                    Avoids Zone        Avg Zone%          Pounds Zone");
+for (const ct of ["High Contact", "Avg Contact", "Low Contact"]) {
+  const row = ["Avoids Zone", "Avg Zone%", "Pounds Zone"].map(zt => {
+    const g = cgrid[`${ct}|${zt}`];
+    return g && g.n >= 10 ? `${pct(g.hits, g.n).padStart(6)} (n=${g.n})` : "   —          ";
+  });
+  console.log(`  ${ct.padEnd(13)}     ${row[0].padEnd(19)}${row[1].padEnd(19)}${row[2]}`);
+}
+
+console.log("\n═══════════════════════════════════════════════════════════════");
 console.log(" 6. FALSE POSITIVES — score ≥ 70 but no hit (PROD)");
 console.log("═══════════════════════════════════════════════════════════════");
 const fpProd = obs.filter(o => o.hitProd >= 70 && !o.gotHit);
@@ -539,10 +750,15 @@ console.log(" 7. SUMMARY");
 console.log("═══════════════════════════════════════════════════════════════");
 const p60 = obs.filter(o => o.hitProd >= 60), h60 = p60.filter(o => o.gotHit).length;
 const v460 = obs.filter(o => o.hitV4 >= 60), hv460 = v460.filter(o => o.gotHit).length;
+const v560 = obs.filter(o => o.hitV5 >= 60), hv560 = v560.filter(o => o.gotHit).length;
+const v660 = obs.filter(o => o.hitV6 >= 60), hv660 = v660.filter(o => o.gotHit).length;
 const p70 = obs.filter(o => o.hitProd >= 70), h70 = p70.filter(o => o.gotHit).length;
 const v470 = obs.filter(o => o.hitV4 >= 70), hv470 = v470.filter(o => o.gotHit).length;
-console.log(`  Score ≥ 60: PROD ${pct(h60, p60.length).padStart(6)} (n=${p60.length})  |  V4 ${pct(hv460, v460.length).padStart(6)} (n=${v460.length})`);
-console.log(`  Score ≥ 70: PROD ${pct(h70, p70.length).padStart(6)} (n=${p70.length})  |  V4 ${pct(hv470, v470.length).padStart(6)} (n=${v470.length})`);
+const v570 = obs.filter(o => o.hitV5 >= 70), hv570 = v570.filter(o => o.gotHit).length;
+const v670 = obs.filter(o => o.hitV6 >= 70), hv670 = v670.filter(o => o.gotHit).length;
+console.log(`  PROD now includes the adopted V7 momentum fix (bounce-back scaled by hitRate20 through coldStreak=2) — see lib/scores.ts.`);
+console.log(`  Score ≥ 60: PROD ${pct(h60, p60.length).padStart(6)} (n=${p60.length})  |  V4 ${pct(hv460, v460.length).padStart(6)} (n=${v460.length})  |  V5 ${pct(hv560, v560.length).padStart(6)} (n=${v560.length})  |  V6 ${pct(hv660, v660.length).padStart(6)} (n=${v660.length})`);
+console.log(`  Score ≥ 70: PROD ${pct(h70, p70.length).padStart(6)} (n=${p70.length})  |  V4 ${pct(hv470, v470.length).padStart(6)} (n=${v470.length})  |  V5 ${pct(hv570, v570.length).padStart(6)} (n=${v570.length})  |  V6 ${pct(hv670, v670.length).padStart(6)} (n=${v670.length})`);
 
 // ═══════════════════════════════════════ HR SCORE ═════════════════════════════
 console.log("\n\n███████████████████████████████████████████████████████████████");
