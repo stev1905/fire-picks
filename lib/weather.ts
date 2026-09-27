@@ -23,7 +23,7 @@ function windDirLabel(deg: number): string {
   return dirs[Math.round(deg / 45) % 8];
 }
 
-function describeCode(code: number): { condition: string; icon: string } {
+export function describeCode(code: number): { condition: string; icon: string } {
   if (code === 0) return { condition: "Clear", icon: "☀️" };
   if (code <= 2) return { condition: "Partly Cloudy", icon: "⛅" };
   if (code === 3) return { condition: "Overcast", icon: "☁️" };

@@ -9,7 +9,7 @@ const SPORTS = [
   { label: "MLB", href: "/" },
   { label: "NHL", href: "/nhl" },
   { label: "NBA", href: null },
-  { label: "NFL", href: null },
+  { label: "NFL", href: "/nfl" },
 ];
 
 function isRouteActive(label: string, pathname: string): boolean {
@@ -22,6 +22,9 @@ function isRouteActive(label: string, pathname: string): boolean {
   }
   if (label === "NHL") {
     return pathname === "/nhl" || pathname.startsWith("/nhl/");
+  }
+  if (label === "NFL") {
+    return pathname === "/nfl" || pathname.startsWith("/nfl/");
   }
   return false;
 }
