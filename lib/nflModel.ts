@@ -291,16 +291,20 @@ export interface TDInputs {
   defRushFactor: number;
   defRecFactor: number;
   weather: Pick<NFLWeather, "passMult" | "rushMult">;
+  // Effective starters lost (weighted by backup drop-off and chance they sit), plus names for display
   olStartersOut: number;           // own offensive line
   oppFrontStartersOut: number;     // opponent DL + LB
   oppSecondaryStartersOut: number; // opponent DB
+  olNames: string;
+  oppFrontNames: string;
+  oppSecondaryNames: string;
   availability: number;
 }
 
 export function tdModel(i: TDInputs): TDBreakdown {
   const adjustments: string[] = [];
   const implied = i.teamImplied ?? LEAGUE_AVG_POINTS;
-  if (i.teamImplied == null) adjustments.push("No betting line — using league-average points");
+  if (i.teamImplied == null) adjustments.push("No betting line — assuming a league-average 22.5 points");
   const teamTDs = implied * TDS_PER_POINT;
 
   // Team pass/rush TD mix, regressed toward league average
@@ -320,24 +324,28 @@ export function tdModel(i: TDInputs): TDBreakdown {
   const recTdShare  = 0.55 * rzTarget + 0.45 * i.targetShare;
 
   let rushAdj = 1, recAdj = 1;
+  const pct = (x: number) => `${Math.round(x * 100)}%`;
   if (i.olStartersOut > 0) {
     const hit = Math.min(0.15, 0.04 * i.olStartersOut);
     rushAdj *= 1 - hit; recAdj *= 1 - hit / 2;
-    adjustments.push(`${i.olStartersOut} OL starter(s) out: −${Math.round(hit * 100)}% rush`);
+    adjustments.push(`Own OL missing ${i.olNames}: rushing TD chance −${pct(hit)}`);
   }
-  if (i.oppFrontStartersOut > 0) {
+  if (i.oppFrontStartersOut > 0 && i.position !== "WR" && i.position !== "TE") {
     const bump = Math.min(0.12, 0.03 * i.oppFrontStartersOut);
     rushAdj *= 1 + bump;
-    adjustments.push(`Opp front seven missing ${i.oppFrontStartersOut}: +${Math.round(bump * 100)}% rush`);
+    adjustments.push(`Opponent DL/LB missing ${i.oppFrontNames}: rushing TD chance +${pct(bump)}`);
   }
   if (i.oppSecondaryStartersOut > 0 && i.position !== "QB") {
     const bump = Math.min(0.12, 0.03 * i.oppSecondaryStartersOut);
     recAdj *= 1 + bump;
-    adjustments.push(`Opp secondary missing ${i.oppSecondaryStartersOut}: +${Math.round(bump * 100)}% rec`);
+    adjustments.push(`Opponent secondary missing ${i.oppSecondaryNames}: receiving TD chance +${pct(bump)}`);
   }
-  if (i.defRushFactor !== 1 && rushTdShare > 0.02) adjustments.push(`Opp rush-TD rate ×${i.defRushFactor.toFixed(2)}`);
-  if (i.defRecFactor !== 1 && recTdShare > 0.02 && i.position !== "QB") adjustments.push(`Opp rec-TD rate vs ${i.position} ×${i.defRecFactor.toFixed(2)}`);
-  if (i.availability < 1) adjustments.push(i.availability === 0 ? "Ruled out" : `Injury designation ×${i.availability}`);
+  const vsAvg = (f: number) => `${f >= 1 ? "+" : "−"}${pct(Math.abs(f - 1))}`;
+  if (Math.abs(i.defRushFactor - 1) >= 0.02 && rushTdShare > 0.02)
+    adjustments.push(`Opponent allows rushing TDs ${vsAvg(i.defRushFactor)} vs league avg (sample-adjusted)`);
+  if (Math.abs(i.defRecFactor - 1) >= 0.02 && recTdShare > 0.02 && i.position !== "QB")
+    adjustments.push(`Opponent allows receiving TDs to ${i.position}s ${vsAvg(i.defRecFactor)} vs league avg (sample-adjusted)`);
+  if (i.availability < 1) adjustments.push(i.availability === 0 ? "Ruled out — 0%" : `Injury designation: chance scaled ×${i.availability}`);
 
   const rushLambda = teamTDs * (1 - passShare) * rushTdShare * i.defRushFactor * rushAdj * i.availability;
   // QBs throw TDs, they don't catch them

@@ -11,13 +11,18 @@ import { gunzipSync } from "node:zlib";
 import type {
   NFLDailySnapshot, NFLGame, NFLInjury, NFLNewsItem, NFLPlayerMatchup,
   NFLPlayerUsage, NFLTeamRef, NFLWeather, DvpCategory, WRRole, SkillPos, DefenseVsPosition,
+  NFLFlag, StarterAbsence, TeamTrenchReport,
 } from "@/types/nfl";
 import {
   type StatRow, normalizePos, classifyWR, buildDefenseVsPosition, shrunkYardsEdge,
-  shrunkTdFactor, weatherImpact, unitForPosition, isMissing, availabilityMult, tdModel,
+  shrunkTdFactor, weatherImpact, unitForPosition, availabilityMult, tdModel,
   finalizeTeamTDs, matchupScoreFromEdge, parseReporter,
 } from "./nflModel";
 import { describeCode } from "./weather";
+import {
+  type DepthEntry, type RosterRow, type SnapRow, buildTrenchReports, unitWeight, describeAbsence,
+  describeReplacement, normName,
+} from "./nflStarters";
 
 const ESPN_SITE = "https://site.api.espn.com/apis/site/v2/sports/football/nfl";
 const ESPN_WEB  = "https://site.web.api.espn.com/apis/site/v2/sports/football/nfl";
@@ -192,6 +197,7 @@ interface TeamDepth {
   starters: Map<string, string>;   // espnId → slot label (LT, RCB, WR1, …)
   skillDepth: Map<string, string>; // espnId → "WR1" | "WR2" | "WR3" | "RB1" | "TE1" | "QB1" …
   wrKey: Map<string, string>;      // espnId → "wr1" | "wr2" | "wr3" (starters only)
+  entries: DepthEntry[];           // every listed player, with ESPN's inline injury tag
 }
 
 async function fetchDepthChart(espnTeamId: string): Promise<TeamDepth | null> {
@@ -203,6 +209,7 @@ async function fetchDepthChart(espnTeamId: string): Promise<TeamDepth | null> {
     starters: new Map(),
     skillDepth: new Map(),
     wrKey: new Map(),
+    entries: [],
   };
   for (const formation of d.depthchart ?? []) {
     const isSpecial = /special/i.test(formation.name ?? "");
@@ -213,6 +220,11 @@ async function fetchDepthChart(espnTeamId: string): Promise<TeamDepth | null> {
       athletes.forEach((a, rank) => {
         const id = String(a.id ?? "");
         if (!id) return;
+        out.entries.push({
+          key, label, rank,
+          name: a.displayName ?? "",
+          injuryStatus: a.injuries?.[0]?.status ?? null,
+        });
         if (rank === 0) {
           out.starters.set(id, key.startsWith("wr") ? key.toUpperCase() : label);
           if (key.startsWith("wr")) out.wrKey.set(id, key);
@@ -261,6 +273,9 @@ async function fetchInjuries(depth: Map<string, TeamDepth>): Promise<NFLInjury[]
         longComment: inj.longComment ?? null,
         reporter: parseReporter(inj.shortComment ?? null),
         updated: inj.date ?? "",
+        isRegularStarter: false, // set once snap-count regulars are known
+        replacedBy: null,
+        dropoff: null,
       });
     }
   }
@@ -402,10 +417,12 @@ export async function buildNFLSnapshot(opts: { week?: number } = {}): Promise<NF
   const sb = await fetchScoreboard(opts.week);
   const { season, week } = sb;
 
-  const [statsText, pbpText, rosterText, depthList] = await Promise.all([
+  const [statsText, pbpText, rosterText, snapText, priorSnapText, depthList] = await Promise.all([
     getText(`${NFLVERSE}/stats_player/stats_player_week_${season}.csv`),
     getText(`${NFLVERSE}/pbp/play_by_play_${season}.csv.gz`, true),
     getText(`${NFLVERSE}/rosters/roster_${season}.csv`),
+    getText(`${NFLVERSE}/snap_counts/snap_counts_${season}.csv`),
+    getText(`${NFLVERSE}/snap_counts/snap_counts_${season - 1}.csv`),
     batchFetch(ESPN_TEAM_IDS, 8, fetchDepthChart),
   ]);
   if (!statsText) throw new Error("nflverse weekly stats unavailable");
@@ -452,16 +469,81 @@ export async function buildNFLSnapshot(opts: { week?: number } = {}): Promise<NF
   const pbp = aggregatePbp(pbpText);
 
   // ── Roster: gsis → espn id / status (latest week row wins)
-  const roster = new Map<string, { espnId: string; team: string; status: string; week: number }>();
+  const roster = new Map<string, { espnId: string; team: string; status: string; week: number; name: string; yearsExp: number | null }>();
   if (rosterText) {
-    for (const r of parseCsv(rosterText, ["gsis_id", "espn_id", "team", "status", "week"])) {
+    for (const r of parseCsv(rosterText, ["gsis_id", "espn_id", "team", "status", "week", "full_name", "years_exp"])) {
       if (!r.gsis_id) continue;
       const prev = roster.get(r.gsis_id);
       if (!prev || num(r.week) >= prev.week) {
-        roster.set(r.gsis_id, { espnId: r.espn_id, team: r.team, status: r.status, week: num(r.week) });
+        roster.set(r.gsis_id, {
+          espnId: r.espn_id, team: r.team, status: r.status, week: num(r.week),
+          name: r.full_name, yearsExp: r.years_exp === "" ? null : num(r.years_exp),
+        });
       }
     }
   }
+
+  // ── Trenches: regular starters by snap share, who's missing, who replaces them
+  const snapRows: SnapRow[] = [];
+  for (const [text, yr] of [[snapText, season], [priorSnapText, season - 1]] as const) {
+    if (!text) continue;
+    for (const r of parseCsv(text, ["pfr_player_id", "player", "team", "position", "game_type", "offense_pct", "defense_pct"])) {
+      if (r.game_type !== "REG") continue;
+      const unit = unitForPosition(r.position);
+      snapRows.push({
+        pfrId: r.pfr_player_id, name: r.player, team: r.team, position: r.position, season: yr,
+        pct: unit === "OL" ? num(r.offense_pct) : num(r.defense_pct),
+      });
+    }
+  }
+  const rosterRows: RosterRow[] = [...roster.values()].map((r) => ({
+    name: r.name, team: r.team, status: r.status, yearsExp: r.yearsExp,
+  }));
+  const { reports: trenchReports, regulars, absences } = buildTrenchReports({
+    season,
+    snaps: snapRows,
+    roster: rosterRows,
+    depth: new Map([...depth.values()].map((d) => [d.abbr, d.entries])),
+    feed: injuries,
+  });
+  const absenceByKey = new Map(absences.map((a) => [`${a.team}|${normName(a.name)}`, a]));
+  for (const inj of injuries) {
+    const k = `${inj.team}|${normName(inj.name)}`;
+    inj.isRegularStarter = regulars.has(k);
+    if (inj.isRegularStarter) inj.isStarter = true;
+    const a = absenceByKey.get(k);
+    if (a) {
+      inj.replacedBy = a.replacement ? describeReplacement(a.replacement) : null;
+      inj.dropoff = a.dropoff;
+      inj.depthSlot = inj.depthSlot ?? a.position;
+    }
+    absenceByKey.delete(k);
+  }
+  // Regular starters missing but absent from the weekly report (typically IR) — add them
+  for (const a of absenceByKey.values()) {
+    injuries.push({
+      espnId: "",
+      name: a.name,
+      team: a.team,
+      position: a.position,
+      unit: a.unit,
+      status: a.status,
+      injury: a.injury,
+      returnDate: null,
+      isStarter: true,
+      depthSlot: a.position,
+      shortComment: `Regular starter (${Math.round(a.snapPct * 100)}% of snaps) not on this week's injury report — listed as ${a.status} via ${a.source}.`,
+      longComment: null,
+      reporter: null,
+      updated: "",
+      isRegularStarter: true,
+      replacedBy: a.replacement ? describeReplacement(a.replacement) : null,
+      dropoff: a.dropoff,
+    });
+  }
+  const emptyReport: TeamTrenchReport = { OL: [], DL: [], LB: [], DB: [] };
+  const trench = (t: string) => trenchReports.get(t) ?? emptyReport;
+  const names = (list: StarterAbsence[]) => list.map((a) => `${a.position} ${a.name}`).join(", ");
 
   // ── Per-player season aggregates
   interface Agg { rows: StatRow[]; pos: SkillPos; }
@@ -545,28 +627,23 @@ export async function buildNFLSnapshot(opts: { week?: number } = {}): Promise<NF
   // ── Injury lookups
   const injByEspn = new Map<string, NFLInjury>();
   for (const inj of injuries) if (inj.espnId) injByEspn.set(inj.espnId, inj);
-  const lineOut = (team: string, units: NFLInjury["unit"][]) =>
-    injuries.filter((i) => i.team === team && i.isStarter && units.includes(i.unit) && (isMissing(i.status) || i.status === "Doubtful"));
-  const lineFlagged = (team: string, unit: NFLInjury["unit"]) =>
-    injuries.filter((i) => i.team === team && i.isStarter && i.unit === unit &&
-      (isMissing(i.status) || ["Doubtful", "Questionable"].includes(i.status)));
+  // Starters likely to sit (Questionable players usually play — they only affect the weights)
+  const likelyOut = (list: StarterAbsence[]) => list.filter((a) => a.status !== "Questionable");
 
   // ── Games
   const games: NFLGame[] = sb.games.map((g, gi) => {
     const homeImplied = g.total != null && g.spread != null ? g.total / 2 - g.spread / 2 : null;
     const awayImplied = g.total != null && g.spread != null ? g.total / 2 + g.spread / 2 : null;
-    const lines = (t: string) => ({
-      ol: lineFlagged(t, "OL"), dl: lineFlagged(t, "DL"), lb: lineFlagged(t, "LB"), db: lineFlagged(t, "DB"),
-    });
     const weather = weatherList[gi];
     const notes: string[] = [];
     for (const [side, opp] of [[g.home.abbr, g.away.abbr], [g.away.abbr, g.home.abbr]] as const) {
-      const ol = lineOut(side, ["OL"]);
-      if (ol.length) notes.push(`${side} OL missing ${ol.map((i) => `${i.depthSlot} ${i.name} (${i.status})`).join(", ")} → downgrade ${side} run game, upgrade ${opp} pass rush`);
-      const dl = lineOut(side, ["DL", "LB"]);
-      if (dl.length >= 2) notes.push(`${side} front seven missing ${dl.length} starters → ${opp} RBs get a boost`);
-      const db = lineOut(side, ["DB"]);
-      if (db.length) notes.push(`${side} secondary missing ${db.map((i) => `${i.depthSlot} ${i.name}`).join(", ")} → ${opp} pass catchers get a boost`);
+      const t = trench(side);
+      const ol = likelyOut(t.OL);
+      if (ol.length) notes.push(`${side} offensive line without ${ol.map(describeAbsence).join("; ")}. Expect a tougher day for ${side} runners and more pressure on the ${side} QB from the ${opp} pass rush.`);
+      const front = likelyOut([...t.DL, ...t.LB]);
+      if (front.length) notes.push(`${side} run defense without ${front.map(describeAbsence).join("; ")}. Upgrade ${opp} running backs.`);
+      const db = likelyOut(t.DB);
+      if (db.length) notes.push(`${side} secondary without ${db.map(describeAbsence).join("; ")}. Upgrade ${opp} receivers and tight ends.`);
     }
     if (weather.impact === "moderate" || weather.impact === "major") notes.push(...weather.notes);
     return {
@@ -583,7 +660,7 @@ export async function buildNFLSnapshot(opts: { week?: number } = {}): Promise<NF
       homeImplied,
       awayImplied,
       weather,
-      lineInjuries: { home: lines(g.home.abbr), away: lines(g.away.abbr) },
+      trenches: { home: trench(g.home.abbr), away: trench(g.away.abbr) },
       notes,
     };
   });
@@ -630,9 +707,11 @@ export async function buildNFLSnapshot(opts: { week?: number } = {}): Promise<NF
     const rushEdge = rushCat ? shrunkYardsEdge(cell(rushCat)) : 0;
 
     // Opponent + own-team injury context
-    const ownOL = lineOut(team, ["OL"]).length;
-    const oppFront = lineOut(opp, ["DL", "LB"]).length;
-    const oppDB = lineOut(opp, ["DB"]).length;
+    // Effective starters lost: weighted by chance they sit and how big the backup drop-off is
+    const ownT = trench(team), oppT = trench(opp);
+    const ownOL = unitWeight(ownT, ["OL"]);
+    const oppFront = unitWeight(oppT, ["DL", "LB"]);
+    const oppDB = unitWeight(oppT, ["DB"]);
     const w = game.weather;
 
     const projRecYds = u.recYdsPg * (1 + recEdge) * w.passMult * (1 + Math.min(0.12, 0.03 * oppDB)) * avail;
@@ -666,16 +745,55 @@ export async function buildNFLSnapshot(opts: { week?: number } = {}): Promise<NF
       olStartersOut: ownOL,
       oppFrontStartersOut: oppFront,
       oppSecondaryStartersOut: oppDB,
+      olNames: names(ownT.OL),
+      oppFrontNames: names([...oppT.DL, ...oppT.LB]),
+      oppSecondaryNames: names(oppT.DB),
       availability: avail,
     });
 
-    const flags: string[] = [];
-    if (ownOL) flags.push(`Own OL −${ownOL}`);
-    if (oppFront && (a.pos === "RB" || a.pos === "QB")) flags.push(`Opp front −${oppFront}`);
-    if (oppDB && (a.pos === "WR" || a.pos === "TE")) flags.push(`Opp DB −${oppDB}`);
-    if (!w.indoor && (w.windMph ?? 0) >= 15) flags.push(`Wind ${w.windMph}mph`);
-    if (w.impact === "major" || w.impact === "moderate") flags.push(`${w.icon ?? ""} ${w.condition ?? "Weather"}`.trim());
-    if (w.indoor) flags.push("Dome");
+    const flags: NFLFlag[] = [];
+    // One absence → name it ("LG Dickerson out (IR)"); several → count them
+    const count = (list: StarterAbsence[]) => {
+      if (list.length === 1) {
+        const a = list[0];
+        const last = a.name.split(" ").slice(1).join(" ") || a.name;
+        const st = a.status === "Questionable" ? "questionable" : a.status === "Doubtful" ? "doubtful"
+          : /reserve/i.test(a.status) ? "out (IR)" : "out";
+        return `${a.position} ${last} ${st}`;
+      }
+      const out = likelyOut(list).length, q = list.length - out;
+      return [out ? `${out} starters out` : "", q ? `${q} questionable` : ""].filter(Boolean).join(", ");
+    };
+    const detail = (list: StarterAbsence[]) => list.map(describeAbsence).join("\n");
+    const runner = a.pos === "RB" || a.pos === "QB";
+    if (ownT.OL.length) flags.push({
+      text: `Own OL: ${count(ownT.OL)}`,
+      detail: `${team} blocking is weakened — ${detail(ownT.OL)}`,
+      tone: "bad",
+    });
+    const front = [...oppT.DL, ...oppT.LB];
+    if (runner && front.length) flags.push({
+      text: `${opp} run D: ${count(front)}`,
+      detail: `Easier running lanes — ${detail(front)}`,
+      tone: "good",
+    });
+    if (!runner && oppT.DB.length) flags.push({
+      text: `${opp} secondary: ${count(oppT.DB)}`,
+      detail: `Weaker coverage — ${detail(oppT.DB)}`,
+      tone: "good",
+    });
+    if (!w.indoor && (w.windMph ?? 0) >= 15) flags.push({
+      text: `Wind ${w.windMph} mph`,
+      detail: `${w.condition ?? ""}, gusts ${w.gustMph ?? "?"} mph. Wind 15+ mph cuts passing efficiency and deep-ball accuracy${runner ? "; slightly favors the run game" : ""}.`,
+      tone: runner ? "neutral" : "bad",
+    });
+    const cond = (w.condition ?? "").toLowerCase();
+    if (!w.indoor && (w.precipChance ?? 0) >= 60 && /rain|shower|drizzle|thunder|snow/.test(cond)) flags.push({
+      text: /snow/.test(cond) ? "Snow likely" : "Rain likely",
+      detail: `${w.precipChance}% chance of ${w.condition?.toLowerCase()} — slick ball, more fumbles, fewer deep passes.`,
+      tone: runner ? "neutral" : "bad",
+    });
+    if (w.indoor) flags.push({ text: "Indoors", detail: "Dome or closed roof — weather is not a factor.", tone: "neutral" });
 
     const primaryCell = cell(primary);
     players.push({
@@ -699,6 +817,8 @@ export async function buildNFLSnapshot(opts: { week?: number } = {}): Promise<NF
       matchupEdge: edge,
       matchupScore: matchupScoreFromEdge(edge, injuryBump),
       defRankPrimary: primaryCell?.yardsRank ?? 16,
+      defAllowedPg: primaryCell?.yardsPg ?? 0,
+      leagueAvgPg: leagueAvg[primary].yardsPg,
       projYards: primary.endsWith("_RUSH") ? projRushYds : projRecYds,
       projRecYds,
       projRushYds,
@@ -716,7 +836,7 @@ export async function buildNFLSnapshot(opts: { week?: number } = {}): Promise<NF
   // Relevant injuries only: teams playing this week, skill positions + lines + starters
   const playing = new Set(teamsThisWeek.map((t) => t.abbr));
   const relevantInjuries = injuries.filter((i) =>
-    playing.has(i.team) && (["QB", "RB", "WR", "TE", "OL"].includes(i.unit) || i.isStarter));
+    playing.has(i.team) && (["QB", "RB", "WR", "TE", "OL"].includes(i.unit) || i.isStarter || i.isRegularStarter));
 
   return {
     season,

@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import type { NFLGame, NFLInjury, NFLNewsItem, NFLPlayerMatchup } from "@/types/nfl";
+import type { LineUnit, NFLGame, NFLNewsItem, NFLPlayerMatchup, StarterAbsence, TeamTrenchReport } from "@/types/nfl";
 import { isMissing } from "@/lib/nflModel";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Toggle, StatusBadge, PosBadge, tdClass, scoreClass, kickoff, gameStarted, timeAgo } from "./ui";
@@ -42,20 +42,45 @@ function WeatherBlock({ game }: { game: NFLGame }) {
   );
 }
 
-function InjuryList({ label, items, emptyText }: { label: string; items: NFLInjury[]; emptyText: string }) {
+const DROPOFF_CLASS: Record<StarterAbsence["dropoff"], string> = {
+  major: "bg-red-500/15 text-red-600 dark:text-red-400",
+  moderate: "bg-orange-500/15 text-orange-600 dark:text-orange-400",
+  minor: "bg-muted text-muted-foreground",
+};
+
+const UNIT_LABEL: Record<LineUnit, string> = {
+  OL: "Offensive line", DL: "Defensive line", LB: "Linebackers", DB: "Secondary",
+};
+
+function AbsenceList({ unit, items }: { unit: LineUnit; items: StarterAbsence[] }) {
   return (
     <div>
-      <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">{label}</div>
+      <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">{UNIT_LABEL[unit]}</div>
       {items.length === 0 ? (
-        <div className="text-[11px] text-green-600 dark:text-green-400">{emptyText}</div>
+        <div className="text-[11px] text-green-600 dark:text-green-400">All regular starters available</div>
       ) : (
-        <ul className="space-y-0.5">
-          {items.map((i) => (
-            <li key={i.espnId + i.name} className="flex items-center gap-1.5 text-[11px]" title={i.shortComment ?? undefined}>
-              <StatusBadge status={i.status} />
-              <span className="text-muted-foreground w-9 shrink-0">{i.depthSlot}</span>
-              <span className="truncate">{i.name}</span>
-              {i.injury && <span className="text-muted-foreground/70 truncate">({i.injury})</span>}
+        <ul className="space-y-1.5 mt-0.5">
+          {items.map((a) => (
+            <li key={a.name} className="text-[11px]" title={a.note ?? `Status from ${a.source}`}>
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <StatusBadge status={a.status} />
+                <span className="text-muted-foreground">{a.position}</span>
+                <span className="font-medium">{a.name}</span>
+                {a.injury && <span className="text-muted-foreground/70">({a.injury})</span>}
+                <span className="text-[10px] text-muted-foreground/70">plays {Math.round(a.snapPct * 100)}% of snaps</span>
+              </div>
+              {a.replacement ? (
+                <div className="pl-5 text-muted-foreground flex items-center gap-1.5 flex-wrap">
+                  <span>→ {a.replacement.name} starts{a.replacement.slot ? ` at ${a.replacement.slot}` : ""}</span>
+                  <span className="text-[10px]">
+                    ({a.replacement.yearsExp === 0 ? "rookie" : a.replacement.yearsExp != null ? `${a.replacement.yearsExp} yr exp` : "exp n/a"},
+                    {" "}{a.replacement.priorStarts} starts since last season)
+                  </span>
+                  <span className={`text-[9px] font-bold px-1 py-0.5 rounded uppercase ${DROPOFF_CLASS[a.dropoff]}`}>{a.dropoff} drop-off</span>
+                </div>
+              ) : a.status === "Questionable" ? (
+                <div className="pl-5 text-[10px] text-muted-foreground">Expected to play but limited — watch inactives ~90 min before kickoff</div>
+              ) : null}
             </li>
           ))}
         </ul>
@@ -65,19 +90,22 @@ function InjuryList({ label, items, emptyText }: { label: string; items: NFLInju
 }
 
 function TrenchReport({ game }: { game: NFLGame }) {
-  const side = (abbr: string, lines: NFLGame["lineInjuries"]["home"]) => (
+  const side = (abbr: string, r: TeamTrenchReport) => (
     <div className="space-y-2">
       <div className="text-xs font-bold">{abbr}</div>
-      <InjuryList label="Offensive line" items={lines.ol} emptyText="All OL starters healthy" />
-      <InjuryList label="Defensive line" items={lines.dl} emptyText="All DL starters healthy" />
-      <InjuryList label="Linebackers" items={lines.lb} emptyText="All LB starters healthy" />
-      <InjuryList label="Secondary" items={lines.db} emptyText="All DB starters healthy" />
+      {(["OL", "DL", "LB", "DB"] as const).map((u) => <AbsenceList key={u} unit={u} items={r[u]} />)}
     </div>
   );
   return (
-    <div className="grid grid-cols-2 gap-4">
-      {side(game.away.abbr, game.lineInjuries.away)}
-      {side(game.home.abbr, game.lineInjuries.home)}
+    <div className="space-y-2">
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        {side(game.away.abbr, game.trenches.away)}
+        {side(game.home.abbr, game.trenches.home)}
+      </div>
+      <p className="text-[10px] text-muted-foreground">
+        Regular starters = top snap share at each unit this season and last, so players already moved to IR still count.
+        Drop-off compares the replacement&apos;s experience: major = under 4 starts since last season, minor = 12+.
+      </p>
     </div>
   );
 }
@@ -100,8 +128,8 @@ function GameCard({ game, players, news }: { game: NFLGame; players: NFLPlayerMa
   const topTD = [...active].sort((a, b) => b.tdProb - a.tdProb).slice(0, 5);
   const topEdges = [...active].filter((p) => p.usage.targetsPg + p.usage.carriesPg >= 4)
     .sort((a, b) => b.matchupScore - a.matchupScore).slice(0, 5);
-  const olOut = game.lineInjuries.home.ol.length + game.lineInjuries.away.ol.length;
-  const dlOut = game.lineInjuries.home.dl.length + game.lineInjuries.away.dl.length;
+  const trenchCount = (["home", "away"] as const).reduce((n, side) =>
+    n + (["OL", "DL", "LB", "DB"] as const).reduce((m, u) => m + game.trenches[side][u].length, 0), 0);
   const spreadText = game.spread == null ? null
     : game.spread === 0 ? "PK"
     : game.spread < 0 ? `${game.home.abbr} ${game.spread}` : `${game.away.abbr} -${game.spread}`;
@@ -121,15 +149,15 @@ function GameCard({ game, players, news }: { game: NFLGame; players: NFLPlayerMa
         <div className="flex items-center justify-between mt-1">
           <div className="text-center flex-1">
             <div className="text-2xl font-bold">{game.away.abbr}</div>
-            <div className="text-[11px] text-muted-foreground">{game.away.record} · {game.awayImplied?.toFixed(1) ?? "—"} impl</div>
+            <div className="text-[11px] text-muted-foreground">{game.away.record} · proj {game.awayImplied?.toFixed(1) ?? "—"} pts</div>
           </div>
           <div className="text-center px-3">
             <div className="text-muted-foreground/50 font-bold text-lg">@</div>
-            {spreadText && <div className="text-[10px] text-muted-foreground whitespace-nowrap">{spreadText} · O/U {game.total}</div>}
+            {spreadText && <div className="text-[10px] text-muted-foreground whitespace-nowrap">{spreadText} · total {game.total}</div>}
           </div>
           <div className="text-center flex-1">
             <div className="text-2xl font-bold">{game.home.abbr}</div>
-            <div className="text-[11px] text-muted-foreground">{game.home.record} · {game.homeImplied?.toFixed(1) ?? "—"} impl</div>
+            <div className="text-[11px] text-muted-foreground">{game.home.record} · proj {game.homeImplied?.toFixed(1) ?? "—"} pts</div>
           </div>
         </div>
       </CardHeader>
@@ -139,7 +167,7 @@ function GameCard({ game, players, news }: { game: NFLGame; players: NFLPlayerMa
         <div className="flex gap-1 border-b border-border">
           {([
             ["overview", "Overview"],
-            ["trenches", `Trenches${olOut + dlOut ? ` (${olOut + dlOut})` : ""}`],
+            ["trenches", `Starters missing${trenchCount ? ` (${trenchCount})` : ""}`],
             ["news", `News (${news.length})`],
           ] as const).map(([k, label]) => (
             <button key={k} onClick={() => setTab(k)}
@@ -162,11 +190,11 @@ function GameCard({ game, players, news }: { game: NFLGame; players: NFLPlayerMa
             )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div className="space-y-1">
-                <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Top TD scores</div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Most likely to score a TD</div>
                 {topTD.map((p) => <PlayerMini key={p.id} p={p} value={`${p.tdScore}%`} cls={tdClass(p.tdScore)} />)}
               </div>
               <div className="space-y-1">
-                <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Best matchups</div>
+                <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold">Best yardage matchups (score 0–100)</div>
                 {topEdges.map((p) => <PlayerMini key={p.id} p={p} value={String(p.matchupScore)} cls={scoreClass(p.matchupScore)} />)}
               </div>
             </div>

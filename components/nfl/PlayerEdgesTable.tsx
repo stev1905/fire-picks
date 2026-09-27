@@ -2,7 +2,9 @@
 
 import { useMemo, useState } from "react";
 import type { NFLGame, NFLPlayerMatchup, SkillPos } from "@/types/nfl";
-import { DVP_LABELS, isMissing } from "@/lib/nflModel";
+import type { DvpCategory, NFLFlag } from "@/types/nfl";
+import { isMissing } from "@/lib/nflModel";
+import { CollapsibleSection } from "@/components/analytics/CollapsibleSection";
 import {
   Chip, FilterLabel, Select, Toggle, SearchBox, SortHeader, PlainHeader, TableShell, EmptyState,
   PosBadge, StatusBadge, rankClass, edgeClass, scoreClass, tdClass, signedPct, ordinal,
@@ -18,12 +20,74 @@ function volume(p: NFLPlayerMatchup): number {
   return u.targetsPg;
 }
 
-function usageText(p: NFLPlayerMatchup): string {
+// Two plain-English lines describing how the player is used
+function usageLines(p: NFLPlayerMatchup): [string, string | null] {
   const u = p.usage;
   const pct = (v: number) => `${Math.round(v * 100)}%`;
-  if (p.position === "QB") return `${u.passYdsPg.toFixed(0)} pass · ${u.carriesPg.toFixed(1)} car`;
-  if (p.position === "RB") return `${u.carriesPg.toFixed(1)} car (${pct(u.carryShare)}) · ${u.targetsPg.toFixed(1)} tgt`;
-  return `${u.targetsPg.toFixed(1)} tgt (${pct(u.targetShare)})${u.adot != null ? ` · aDOT ${u.adot.toFixed(1)}` : ""}`;
+  if (p.position === "QB") {
+    return [`${u.passYdsPg.toFixed(0)} pass yds per game`, `${u.carriesPg.toFixed(1)} runs per game · ${u.rushYdsPg.toFixed(0)} rush yds`];
+  }
+  if (p.position === "RB") {
+    return [`${u.carriesPg.toFixed(1)} carries per game (${pct(u.carryShare)} of team)`, `${u.targetsPg.toFixed(1)} targets per game`];
+  }
+  return [
+    `${u.targetsPg.toFixed(1)} targets per game (${pct(u.targetShare)} of team)`,
+    u.adot != null ? `Targeted ${u.adot.toFixed(1)} yds downfield on avg` : null,
+  ];
+}
+
+const MATCHUP_TEXT: Record<DvpCategory, string> = {
+  WR_SLOT_REC: "Slot WR receiving",
+  WR_WIDE_REC: "Outside WR receiving",
+  WR_REC:      "WR receiving",
+  TE_REC:      "TE receiving",
+  RB_REC:      "RB receiving",
+  RB_RUSH:     "RB rushing",
+  QB_RUSH:     "QB rushing",
+  QB_PASS:     "QB passing",
+};
+
+function rankWord(rank: number): string {
+  if (rank >= 25) return "generous";
+  if (rank <= 8) return "stingy";
+  return "average";
+}
+
+function scoreWord(score: number): string {
+  if (score >= 70) return "Great spot";
+  if (score >= 58) return "Good spot";
+  if (score > 42) return "Neutral";
+  if (score > 30) return "Tough spot";
+  return "Very tough";
+}
+
+const TONE_CLASS: Record<NFLFlag["tone"], string> = {
+  good: "bg-green-500/15 text-green-700 dark:text-green-400",
+  bad: "bg-red-500/15 text-red-600 dark:text-red-400",
+  neutral: "bg-muted text-muted-foreground",
+};
+
+function Legend() {
+  const rows: [string, string][] = [
+    ["Opp", "Opponent, and your team's projected points from the betting line (spread + total)."],
+    ["Matchup", "The part of the opponent's defense this player attacks, and how many yards per game it gives up vs the league average."],
+    ["Def Rank", "Where that defense ranks in yards allowed to this role. 32nd = gives up the most (best for you), 1st = gives up the least."],
+    ["Edge", "How much more (or less) that defense allows than average, pulled toward average while samples are small."],
+    ["Score", "0–100 matchup grade. 50 = neutral. Also accounts for injured starters on the opposing defense and your own offensive line."],
+    ["Proj Yds", "Season average adjusted for the matchup, weather and line injuries."],
+    ["TD", "Chance to score a touchdown, with the no-vig fair odds to compare against your sportsbook."],
+    ["Notes", "Green helps the player, red hurts. Hover for who is injured and who replaces them."],
+  ];
+  return (
+    <div className="bg-card border border-border rounded-2xl p-3 grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-1.5">
+      {rows.map(([k, v]) => (
+        <div key={k} className="text-[11px] leading-snug">
+          <span className="font-semibold text-foreground">{k}</span>
+          <span className="text-muted-foreground"> — {v}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 interface Props {
@@ -75,6 +139,9 @@ export function PlayerEdgesTable({ players, games }: Props) {
 
   return (
     <div className="space-y-3">
+      <CollapsibleSection title="How to read this table" defaultOpen>
+        <Legend />
+      </CollapsibleSection>
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex items-center gap-1.5">
           <FilterLabel>Pos</FilterLabel>
@@ -118,16 +185,16 @@ export function PlayerEdgesTable({ players, games }: Props) {
             <thead className="sticky top-0 z-10 bg-card border-b border-border">
               <tr>
                 <PlainHeader label="#" className="w-8" />
-                <PlainHeader label="Player" className="min-w-[170px]" />
+                <PlainHeader label="Player" className="min-w-[140px]" />
                 <PlainHeader label="Opp" />
-                <PlainHeader label="Matchup" />
+                <PlainHeader label="Matchup" className="min-w-[140px]" />
                 <SortHeader label="Def Rank" col="defRank" current={sort.key} dir={sort.dir} onSort={sort.onSort} title="Opponent rank allowing yards to this role (32 = most generous)" />
                 <SortHeader label="Edge" col="matchupEdge" current={sort.key} dir={sort.dir} onSort={sort.onSort} title="Yards allowed vs league avg, shrunk for sample size" />
                 <SortHeader label="Score" col="matchupScore" current={sort.key} dir={sort.dir} onSort={sort.onSort} title="0–100 matchup score, 50 = neutral. Includes opposing injuries and your own OL health" />
-                <SortHeader label="Usage" col="volume" current={sort.key} dir={sort.dir} onSort={sort.onSort} className="min-w-[150px]" />
+                <SortHeader label="Usage" col="volume" current={sort.key} dir={sort.dir} onSort={sort.onSort} className="min-w-[160px]" />
                 <SortHeader label="Proj Yds" col="projYards" current={sort.key} dir={sort.dir} onSort={sort.onSort} />
                 <SortHeader label="TD" col="tdScore" current={sort.key} dir={sort.dir} onSort={sort.onSort} title="Anytime TD probability (%)" />
-                <PlainHeader label="Flags" className="min-w-[140px]" />
+                <PlainHeader label="Notes" className="min-w-[190px]" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -138,7 +205,7 @@ export function PlayerEdgesTable({ players, games }: Props) {
                     <td className="px-2.5 py-1.5 text-[11px] text-muted-foreground tabular-nums">{i + 1}</td>
                     <td className="px-2.5 py-1.5">
                       <div className="flex items-center gap-1.5">
-                        <span className="font-semibold text-[12px] truncate max-w-[150px]" title={p.injuryNote ?? undefined}>{p.name}</span>
+                        <span className="font-semibold text-[12px] truncate max-w-[130px]" title={p.injuryNote ?? undefined}>{p.name}</span>
                         <StatusBadge status={p.injuryStatus} />
                       </div>
                       <div className="flex items-center gap-1.5 mt-0.5">
@@ -151,37 +218,57 @@ export function PlayerEdgesTable({ players, games }: Props) {
                       <div className="text-[12px] font-medium">{p.isHome ? "vs" : "@"} {p.opponent}</div>
                       {g && (
                         <div className="text-[10px] text-muted-foreground">
-                          {(p.isHome ? g.homeImplied : g.awayImplied)?.toFixed(1) ?? "—"} impl
+                          {p.team} projected {(p.isHome ? g.homeImplied : g.awayImplied)?.toFixed(1) ?? "—"} pts
                         </div>
                       )}
                     </td>
-                    <td className="px-2.5 py-1.5 text-[11px] text-muted-foreground whitespace-nowrap">{DVP_LABELS[p.primaryCategory]}</td>
                     <td className="px-2.5 py-1.5">
+                      <div className="text-[11px] font-medium">{MATCHUP_TEXT[p.primaryCategory]}</div>
+                      <div className="text-[10px] text-muted-foreground">
+                        {p.opponent} allows {p.defAllowedPg.toFixed(0)} yds/g (avg {p.leagueAvgPg.toFixed(0)})
+                      </div>
+                    </td>
+                    <td className="px-2.5 py-1.5 whitespace-nowrap">
                       <span className={`text-[11px] font-semibold px-1.5 py-0.5 rounded tabular-nums ${rankClass(p.defRankPrimary)}`}>
-                        {ordinal(p.defRankPrimary)}
+                        {ordinal(p.defRankPrimary)} of 32
                       </span>
+                      <div className="text-[10px] text-muted-foreground mt-0.5">{rankWord(p.defRankPrimary)}</div>
                     </td>
-                    <td className={`px-2.5 py-1.5 text-[12px] font-mono font-semibold tabular-nums ${edgeClass(p.matchupEdge)}`}>
-                      {signedPct(p.matchupEdge)}
+                    <td className="px-2.5 py-1.5 whitespace-nowrap">
+                      <div className={`text-[12px] font-mono font-semibold tabular-nums ${edgeClass(p.matchupEdge)}`}>{signedPct(p.matchupEdge)}</div>
+                      <div className="text-[10px] text-muted-foreground">vs avg</div>
                     </td>
-                    <td className="px-2.5 py-1.5">
+                    <td className="px-2.5 py-1.5 whitespace-nowrap">
                       <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded tabular-nums ${scoreClass(p.matchupScore)}`}>
                         {p.matchupScore}
                       </span>
+                      <div className="text-[10px] text-muted-foreground mt-0.5">{scoreWord(p.matchupScore)}</div>
                     </td>
-                    <td className="px-2.5 py-1.5 text-[11px] text-muted-foreground whitespace-nowrap">{usageText(p)}</td>
-                    <td className="px-2.5 py-1.5 text-[12px] font-mono tabular-nums" title={`Rec ${p.projRecYds.toFixed(0)} · Rush ${p.projRushYds.toFixed(0)}`}>
-                      {p.projYards.toFixed(0)}
+                    <td className="px-2.5 py-1.5 text-[11px] max-w-[190px]">
+                      {(() => {
+                        const [a, b] = usageLines(p);
+                        return (<><div>{a}</div>{b && <div className="text-[10px] text-muted-foreground">{b}</div>}</>);
+                      })()}
                     </td>
-                    <td className="px-2.5 py-1.5">
-                      <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded tabular-nums ${tdClass(p.tdScore)}`} title={`Fair odds ${p.tdFairOdds}`}>
+                    <td className="px-2.5 py-1.5 whitespace-nowrap">
+                      <div className="text-[12px] font-mono tabular-nums">{p.projYards.toFixed(0)}</div>
+                      {p.projRecYds >= 5 && p.projRushYds >= 5 && (
+                        <div className="text-[10px] text-muted-foreground">rec {p.projRecYds.toFixed(0)} · rush {p.projRushYds.toFixed(0)}</div>
+                      )}
+                    </td>
+                    <td className="px-2.5 py-1.5 whitespace-nowrap">
+                      <span className={`text-[11px] font-bold px-1.5 py-0.5 rounded tabular-nums ${tdClass(p.tdScore)}`}>
                         {p.tdScore}%
                       </span>
+                      <div className="text-[10px] text-muted-foreground mt-0.5">fair {p.tdFairOdds}</div>
                     </td>
                     <td className="px-2.5 py-1.5">
-                      <div className="flex flex-wrap gap-1">
+                      <div className="flex flex-col items-start gap-1">
                         {p.flags.map((f) => (
-                          <span key={f} className="text-[9px] px-1 py-0.5 rounded bg-muted text-muted-foreground whitespace-nowrap">{f}</span>
+                          <span key={f.text} title={f.detail}
+                            className={`text-[10px] leading-tight px-1.5 py-0.5 rounded cursor-help ${TONE_CLASS[f.tone]}`}>
+                            {f.text}
+                          </span>
                         ))}
                       </div>
                     </td>
@@ -193,8 +280,8 @@ export function PlayerEdgesTable({ players, games }: Props) {
         </TableShell>
       )}
       <p className="text-[11px] text-muted-foreground">
-        Edge = yards the opponent allows to this role vs league average, shrunk toward average for small samples.
-        Slot/Wide is an estimate (depth chart WR3 + target depth). Hover a name for injury notes, the role badge for why it was classified.
+        Slot vs outside is estimated from the depth chart and how far downfield a receiver is targeted — no free source publishes true alignment.
+        Hover a player&apos;s name for their injury note, or the role badge to see why they were classified that way.
       </p>
     </div>
   );

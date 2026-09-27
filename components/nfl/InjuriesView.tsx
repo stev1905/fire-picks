@@ -21,8 +21,9 @@ function InjuryRow({ inj, opponent }: { inj: NFLInjury; opponent: string | null 
           <span className="font-semibold text-[12px]">{inj.name}</span>
           <span className="text-[10px] text-muted-foreground">{inj.team} · {inj.position}</span>
           {inj.isStarter && (
-            <span className="text-[9px] font-bold px-1 py-0.5 rounded bg-orange-500/15 text-orange-600 dark:text-orange-400">
-              STARTER{inj.depthSlot ? ` · ${inj.depthSlot}` : ""}
+            <span title={inj.isRegularStarter ? "Top snap share at their position group this season and last" : "First on this week's ESPN depth chart"}
+              className="text-[9px] font-bold px-1 py-0.5 rounded bg-orange-500/15 text-orange-600 dark:text-orange-400">
+              {inj.isRegularStarter ? "REGULAR STARTER" : "STARTER"}{inj.depthSlot ? ` · ${inj.depthSlot}` : ""}
             </span>
           )}
           {inj.injury && <span className="text-[10px] text-muted-foreground">{inj.injury}</span>}
@@ -30,6 +31,18 @@ function InjuryRow({ inj, opponent }: { inj: NFLInjury; opponent: string | null 
           <span className="ml-auto text-[10px] text-muted-foreground/70">{inj.updated ? timeAgo(inj.updated) : ""}</span>
         </div>
         {inj.shortComment && <p className="text-[11px] text-muted-foreground mt-1">{inj.shortComment}</p>}
+        {inj.replacedBy && (
+          <p className="text-[11px] mt-1">
+            <span className="text-muted-foreground">Replaced by </span>
+            <span className="font-medium">{inj.replacedBy}</span>
+            {inj.dropoff && (
+              <span className={`ml-1.5 text-[9px] font-bold px-1 py-0.5 rounded uppercase ${
+                inj.dropoff === "major" ? "bg-red-500/15 text-red-600 dark:text-red-400"
+                : inj.dropoff === "moderate" ? "bg-orange-500/15 text-orange-600 dark:text-orange-400"
+                : "bg-muted text-muted-foreground"}`}>{inj.dropoff} drop-off</span>
+            )}
+          </p>
+        )}
         {inj.reporter && <p className="text-[10px] text-muted-foreground/80 mt-0.5">Source: {inj.reporter}</p>}
       </button>
       {open && inj.longComment && (
@@ -88,7 +101,8 @@ export function InjuriesView({ injuries, news, games }: Props) {
     const out: { team: string; ol: number; dl: number }[] = [];
     for (const t of teams) {
       const missing = (u: Unit) => injuries.filter((i) =>
-        i.team === t && i.unit === u && i.isStarter && ["Out", "Doubtful", "Injured Reserve"].includes(i.status)).length;
+        i.team === t && i.unit === u && i.isRegularStarter &&
+        (["Out", "Doubtful", "Injured Reserve"].includes(i.status) || i.status.startsWith("Reserve"))).length;
       const ol = missing("OL"), dl = missing("DL");
       if (ol || dl) out.push({ team: t, ol, dl });
     }
@@ -102,7 +116,7 @@ export function InjuriesView({ injuries, news, games }: Props) {
       {lineSummary.length > 0 && (
         <div className="bg-card border border-border rounded-2xl p-3">
           <div className="text-[10px] uppercase tracking-wide text-muted-foreground font-semibold mb-2">
-            Line starters Out / Doubtful
+            Regular starters out or doubtful on the lines (includes IR)
           </div>
           <div className="flex flex-wrap gap-2">
             {lineSummary.map((s) => (
@@ -155,7 +169,8 @@ export function InjuriesView({ injuries, news, games }: Props) {
             </div>
           )}
           <p className="text-[11px] text-muted-foreground mt-2">
-            Click an entry for the full beat-reporter note. &quot;Starter&quot; = first on the ESPN depth chart.
+            Click an entry for the full beat-reporter note. &quot;Regular starter&quot; = top snap share at their position group this season and last,
+            so players moved to IR (and dropped from the weekly report) still show up with their replacement.
           </p>
         </div>
 

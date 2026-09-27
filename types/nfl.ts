@@ -50,10 +50,8 @@ export interface NFLGame {
   homeImplied: number | null;
   awayImplied: number | null;
   weather: NFLWeather;
-  lineInjuries: {            // starters on the lines who are Out/Doubtful/Questionable
-    home: { ol: NFLInjury[]; dl: NFLInjury[]; lb: NFLInjury[]; db: NFLInjury[] };
-    away: { ol: NFLInjury[]; dl: NFLInjury[]; lb: NFLInjury[]; db: NFLInjury[] };
-  };
+  // Regular starters (by snap share) on each side who are Out / IR / Doubtful / Questionable
+  trenches: { home: TeamTrenchReport; away: TeamTrenchReport };
   notes: string[];           // auto-generated matchup notes
 }
 
@@ -160,7 +158,49 @@ export interface NFLPlayerMatchup {
   tdFairOdds: string;        // American odds, e.g. "+145"
   td: TDBreakdown;
 
-  flags: string[];           // short badges: "OL 2 out", "Wind 18mph", "CB1 out"
+  // Defensive context for the primary category, so the UI can say "allows 106 yds/g (avg 45)"
+  defAllowedPg: number;
+  leagueAvgPg: number;
+
+  flags: NFLFlag[];
+}
+
+export interface NFLFlag {
+  text: string;              // short chip text: "Own OL: 1 starter out"
+  detail: string;            // tooltip: who, and who replaces them
+  tone: "good" | "bad" | "neutral"; // from this player's perspective
+}
+
+export type LineUnit = "OL" | "DL" | "LB" | "DB";
+
+export interface Replacement {
+  name: string;
+  slot: string | null;       // depth chart spot they now start at (e.g. "C")
+  yearsExp: number | null;
+  priorStarts: number;       // games at ≥50% snaps since last season
+}
+
+// A regular starter (top snap share at their unit) who is not fully available
+export interface StarterAbsence {
+  name: string;
+  team: string;
+  unit: LineUnit;
+  position: string;
+  status: string;            // Out, Injured Reserve, Doubtful, Questionable, Reserve list…
+  injury: string | null;
+  snapPct: number;           // their normal share of snaps
+  source: "injury report" | "depth chart" | "roster (reserve list)";
+  replacement: Replacement | null;
+  dropoff: "major" | "moderate" | "minor";
+  weight: number;            // effective starters lost (dropoff × chance they sit)
+  note: string | null;       // reporter note if any
+}
+
+export interface TeamTrenchReport {
+  OL: StarterAbsence[];
+  DL: StarterAbsence[];
+  LB: StarterAbsence[];
+  DB: StarterAbsence[];
 }
 
 export interface NFLInjury {
@@ -178,6 +218,9 @@ export interface NFLInjury {
   longComment: string | null;
   reporter: string | null;   // parsed "X of Y reports" attribution
   updated: string;
+  isRegularStarter: boolean; // top snap share at their unit, regardless of today's depth chart
+  replacedBy: string | null; // e.g. "Drew Kendall (C · 1 yr exp · 3 starts)"
+  dropoff: StarterAbsence["dropoff"] | null;
 }
 
 export interface NFLNewsItem {

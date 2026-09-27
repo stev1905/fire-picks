@@ -93,12 +93,12 @@ export function TDBoard({ players, games }: Props) {
                 <PlainHeader label="Opp" />
                 <SortHeader label="TD Score" col="tdScore" current={sort.key} dir={sort.dir} onSort={sort.onSort} />
                 <PlainHeader label="Fair Odds" />
-                <SortHeader label="Team Impl" col="implied" current={sort.key} dir={sort.dir} onSort={sort.onSort} title="Market-implied team points" />
-                <SortHeader label="Rush λ" col="rush" current={sort.key} dir={sort.dir} onSort={sort.onSort} title="Expected rushing TDs" />
-                <SortHeader label="Rec λ" col="rec" current={sort.key} dir={sort.dir} onSort={sort.onSort} title="Expected receiving TDs" />
-                <SortHeader label="RZ Opps" col="rz" current={sort.key} dir={sort.dir} onSort={sort.onSort} title="Season red-zone carries / targets (share of team)" />
+                <SortHeader label="Team Proj Pts" col="implied" current={sort.key} dir={sort.dir} onSort={sort.onSort} title="Points the betting line projects for this player's team" />
+                <SortHeader label="Exp Rush TDs" col="rush" current={sort.key} dir={sort.dir} onSort={sort.onSort} title="Expected rushing touchdowns this game (model λ)" />
+                <SortHeader label="Exp Rec TDs" col="rec" current={sort.key} dir={sort.dir} onSort={sort.onSort} title="Expected receiving touchdowns this game (model λ)" />
+                <SortHeader label="Red Zone Looks" col="rz" current={sort.key} dir={sort.dir} onSort={sort.onSort} title="Season red-zone carries / targets (share of team)" />
                 <PlainHeader label="Season TDs" />
-                <PlainHeader label="Adjustments" className="min-w-[220px]" />
+                <PlainHeader label="Why this number" className="min-w-[260px]" />
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -124,20 +124,20 @@ export function TDBoard({ players, games }: Props) {
                     <td className="px-2.5 py-1.5 text-[12px] font-mono tabular-nums">{p.tdFairOdds}</td>
                     <td className="px-2.5 py-1.5 text-[12px] font-mono tabular-nums text-muted-foreground">
                       {p.td.teamImplied.toFixed(1)}
-                      <div className="text-[10px]">{p.td.teamTDs.toFixed(1)} TDs · {Math.round(p.td.passTdShare * 100)}% pass</div>
+                      <div className="text-[10px]">≈{p.td.teamTDs.toFixed(1)} team TDs · {Math.round(p.td.passTdShare * 100)}% through the air</div>
                     </td>
                     <td className="px-2.5 py-1.5 text-[12px] font-mono tabular-nums">{p.td.rushLambda.toFixed(2)}</td>
                     <td className="px-2.5 py-1.5 text-[12px] font-mono tabular-nums">{p.td.recLambda.toFixed(2)}</td>
                     <td className="px-2.5 py-1.5 text-[11px] text-muted-foreground whitespace-nowrap">
-                      {u.rzCarries > 0 && <div>{u.rzCarries} car ({Math.round(u.rzCarryShare * 100)}%){u.i10Carries > 0 && ` · ${u.i10Carries} i10`}</div>}
-                      {u.rzTargets > 0 && <div>{u.rzTargets} tgt ({Math.round(u.rzTargetShare * 100)}%)</div>}
+                      {u.rzCarries > 0 && <div>{u.rzCarries} carries ({Math.round(u.rzCarryShare * 100)}% of team){u.i10Carries > 0 && ` · ${u.i10Carries} inside the 10`}</div>}
+                      {u.rzTargets > 0 && <div>{u.rzTargets} targets ({Math.round(u.rzTargetShare * 100)}% of team)</div>}
                       {u.rzCarries === 0 && u.rzTargets === 0 && "—"}
                     </td>
                     <td className="px-2.5 py-1.5 text-[11px] text-muted-foreground whitespace-nowrap">
-                      {u.rushTds + u.recTds} in {u.games}g
+                      {u.rushTds + u.recTds} TD in {u.games} games
                     </td>
                     <td className="px-2.5 py-1.5 text-[10px] text-muted-foreground">
-                      {p.td.adjustments.length ? p.td.adjustments.join(" · ") : "—"}
+                      {p.td.adjustments.length ? (<ul className="space-y-0.5">{p.td.adjustments.map((a) => <li key={a}>• {a}</li>)}</ul>) : "No adjustments — base rate from usage and team total"}
                     </td>
                   </tr>
                 );
