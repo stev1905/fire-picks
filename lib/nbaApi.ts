@@ -235,6 +235,24 @@ function projectStarters(
   const onTeam = (id: string) => hist.get(id)?.lastTeamId === teamId && !isOut(injuries.get(id));
   const last = teamGames[0];
   const five = (last?.players ?? []).filter((p) => p.teamId === teamId && p.starter).map((p) => p.id).filter(onTeam);
+
+  // A regular starter who sat out the last game entirely (rest, minor injury) and
+  // isn't ruled out today gets his spot back from whoever filled in. Regulars who
+  // played but came off the bench are a real lineup change, so they stay benched.
+  const prior = teamGames.slice(1, 6);
+  const startsIn = (id: string, games: NBAGameExtract[]) =>
+    games.filter((g) => g.players.some((p) => p.id === id && p.teamId === teamId && p.starter)).length;
+  const playedLast = new Set((last?.players ?? []).filter((p) => p.teamId === teamId).map((p) => p.id));
+  const regulars = [...new Set(prior.flatMap((g) => g.players.filter((p) => p.teamId === teamId && p.starter).map((p) => p.id)))]
+    .filter((id) => startsIn(id, prior) >= Math.min(3, prior.length) && !playedLast.has(id) && onTeam(id) && !five.includes(id))
+    .sort((a, b) => startsIn(b, prior) - startsIn(a, prior));
+  for (const id of regulars) {
+    if (five.length < 5) { five.push(id); continue; }
+    // Displace the last-game starter with the fewest recent starts, if he's less established
+    const fillIn = [...five].sort((a, b) => startsIn(a, prior) - startsIn(b, prior))[0];
+    if (startsIn(fillIn, prior) >= startsIn(id, prior)) break;
+    five.splice(five.indexOf(fillIn), 1, id);
+  }
   if (five.length >= 5) return five.slice(0, 5);
 
   // Rank candidates by starts in the last 10 team games, then shot volume
