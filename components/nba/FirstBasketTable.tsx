@@ -4,13 +4,13 @@ import { useMemo, useState } from "react";
 import type { NBADailySnapshot, NBAFirstBasketRow } from "@/types/nba";
 import { CollapsibleSection } from "@/components/analytics/CollapsibleSection";
 import {
-  FilterLabel, Select, Toggle, SearchBox, SortHeader, TableShell, EmptyState, useTableSort,
+  FilterLabel, Toggle, SortHeader, TableShell, EmptyState, useTableSort,
 } from "@/components/nfl/ui";
 
 type SortKey =
   | "team" | "player" | "time" | "tip" | "gameShot" | "teamShot" | "shotPct" | "basket" | "l5" | "score";
 
-const tipRate = (r: NBAFirstBasketRow) => (r.tipsTaken ? r.tipsWon / r.tipsTaken : -1);
+const tipRate = (r: NBAFirstBasketRow) => (r.teamTipsGames ? r.teamTipsWon / r.teamTipsGames : -1);
 const shotPct = (r: NBAFirstBasketRow) => (r.gamesPlayed ? r.firstTeamShots / r.gamesPlayed : 0);
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
@@ -36,8 +36,14 @@ function Count({ n, of }: { n: number; of?: number }) {
 
 export function FirstBasketTable({ snapshot }: { snapshot: NBADailySnapshot }) {
   const { games, players } = snapshot;
-  const [gameId, setGameId] = useState("ALL");
-  const [search, setSearch] = useState("");
+  // Empty = every game
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const toggleGame = (id: string) =>
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
   const [hideStarted, setHideStarted] = useState(true);
   const sort = useTableSort<SortKey>("score");
 
@@ -45,13 +51,12 @@ export function FirstBasketTable({ snapshot }: { snapshot: NBADailySnapshot }) {
   const anyStarted = games.some((g) => g.status !== "STATUS_SCHEDULED");
 
   const rows = useMemo(() => {
-    const q = search.trim().toLowerCase();
     const val = (r: NBAFirstBasketRow): number | string => {
       switch (sort.key) {
         case "team":     return r.team;
         case "player":   return r.name;
         case "time":     return r.startTime;
-        case "tip":      return tipRate(r) * 1000 + r.tipsTaken;   // ties broken by volume
+        case "tip":      return tipRate(r) * 1000 + r.teamTipsGames;   // ties broken by volume
         case "gameShot": return r.firstGameShots;
         case "teamShot": return r.firstTeamShots;
         case "shotPct":  return shotPct(r);
@@ -67,11 +72,10 @@ export function FirstBasketTable({ snapshot }: { snapshot: NBADailySnapshot }) {
     };
     return players
       .filter((r) =>
-        (gameId === "ALL" || r.gameId === gameId) &&
-        !(hideStarted && gameById.get(r.gameId)?.status !== "STATUS_SCHEDULED") &&
-        (!q || r.name.toLowerCase().includes(q) || r.team.toLowerCase().includes(q)))
+        (selected.size === 0 || selected.has(r.gameId)) &&
+        !(hideStarted && gameById.get(r.gameId)?.status !== "STATUS_SCHEDULED"))
       .sort(cmp);
-  }, [players, gameId, search, hideStarted, sort.key, sort.dir, gameById]);
+  }, [players, selected, hideStarted, sort.key, sort.dir, gameById]);
 
   const H = (label: string, col: SortKey, title?: string, className?: string) => (
     <SortHeader label={label} col={col} current={sort.key} dir={sort.dir} onSort={sort.onSort} title={title} className={className} />
@@ -91,15 +95,27 @@ export function FirstBasketTable({ snapshot }: { snapshot: NBADailySnapshot }) {
         </div>
       </CollapsibleSection>
 
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
-        <div className="flex items-center gap-1.5">
-          <FilterLabel>Game</FilterLabel>
-          <Select value={gameId} onChange={setGameId} options={[
-            { value: "ALL", label: "All games" },
-            ...games.map((g) => ({ value: g.id, label: `${g.away.abbr} @ ${g.home.abbr} · ${tipTime(g.startTime)}` })),
-          ]} />
-        </div>
-        <SearchBox value={search} onChange={setSearch} placeholder="Search player / team" />
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+        <FilterLabel>Games</FilterLabel>
+        {games.map((g) => (
+          <label
+            key={g.id}
+            className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg border cursor-pointer select-none transition-colors ${
+              selected.has(g.id)
+                ? "border-orange-500 bg-orange-500/10 text-foreground"
+                : "border-border bg-muted text-muted-foreground hover:text-foreground"
+            }`}
+          >
+            <input type="checkbox" checked={selected.has(g.id)} onChange={() => toggleGame(g.id)} className="accent-orange-500" />
+            <span className="font-semibold">{g.away.abbr} @ {g.home.abbr}</span>
+            <span className="tabular-nums opacity-70">{tipTime(g.startTime)}</span>
+          </label>
+        ))}
+        {selected.size > 0 && (
+          <button type="button" onClick={() => setSelected(new Set())} className="text-xs text-muted-foreground hover:text-foreground underline">
+            Clear ({selected.size})
+          </button>
+        )}
         {anyStarted && <Toggle checked={hideStarted} onChange={setHideStarted} label="Hide started games" />}
       </div>
 
@@ -113,7 +129,7 @@ export function FirstBasketTable({ snapshot }: { snapshot: NBADailySnapshot }) {
                 {H("Team", "team")}
                 {H("Player", "player", undefined, "min-w-[170px]")}
                 {H("Time (ET)", "time")}
-                {H("Tips Won", "tip", "Opening tips won / taken this season")}
+                {H("Team Tips Won", "tip", "Opening tips his team has won this season")}
                 {H("1st Game Shot", "gameShot", "Games he took the first field-goal attempt of the game")}
                 {H("1st Team Shot", "teamShot", "Games he took his team's first field-goal attempt")}
                 {H("1st Shot %", "shotPct", "Share of his games where he took his team's first shot")}
@@ -135,7 +151,7 @@ export function FirstBasketTable({ snapshot }: { snapshot: NBADailySnapshot }) {
                       <div className="flex items-center gap-1.5">
                         <span className="font-semibold text-[12px]">{r.name}</span>
                         {r.isJumper && (
-                          <span title="Projected to take the opening tip" className="text-[9px] font-bold px-1 py-0.5 rounded bg-sky-500/15 text-sky-600 dark:text-sky-400">J</span>
+                          <span title={`Projected to take the opening tip${r.tipsTaken ? ` · won ${r.tipsWon} of ${r.tipsTaken} as jumper` : ""}`} className="text-[9px] font-bold px-1 py-0.5 rounded bg-sky-500/15 text-sky-600 dark:text-sky-400">J</span>
                         )}
                         {r.injuryStatus && (
                           <span title={r.injuryStatus} className="text-[9px] font-bold px-1 py-0.5 rounded bg-amber-400/90 text-black">GTD</span>
@@ -154,10 +170,10 @@ export function FirstBasketTable({ snapshot }: { snapshot: NBADailySnapshot }) {
                       )}
                     </td>
                     <td className="px-2.5 py-1.5 text-[12px] whitespace-nowrap tabular-nums">
-                      {r.tipsTaken ? (
+                      {r.teamTipsGames ? (
                         <>
-                          <span className="font-semibold">{pct(r.tipsWon / r.tipsTaken)}</span>
-                          <span className="text-muted-foreground text-[11px]"> ({r.tipsWon} of {r.tipsTaken})</span>
+                          <span className="font-semibold">{pct(r.teamTipsWon / r.teamTipsGames)}</span>
+                          <span className="text-muted-foreground text-[11px]"> ({r.teamTipsWon} of {r.teamTipsGames})</span>
                         </>
                       ) : <span className="text-muted-foreground">—</span>}
                     </td>

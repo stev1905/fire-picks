@@ -40,7 +40,10 @@ export interface NBAFirstBasketRow {
 
   gamesPlayed: number;
 
-  // Opening tip — every game this player jumped
+  // Opening tip — his TEAM's record this season (any jumper)
+  teamTipsWon: number;
+  teamTipsGames: number;
+  // ...and his own, as a jumper (drives the model's tip matchup)
   tipsTaken: number;
   tipsWon: number;
 

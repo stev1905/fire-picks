@@ -8,7 +8,7 @@ import type {
   NBADailySnapshot, NBAGame, NBAFirstBasketRow, NBAGameExtract, NBAGamePlayer, NBAPbpCache, NBATeamRef,
 } from "@/types/nba";
 
-export const NBA_SCHEMA_VERSION = 1;
+export const NBA_SCHEMA_VERSION = 2;
 
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";
 
@@ -404,7 +404,9 @@ export async function buildNBASnapshot(
       const starters = confirmed.length === 5 ? confirmed : projectStarters(team.id, teamGames, hist, injuries);
       game.lineup[team.id] = confirmed.length === 5 ? "confirmed" : "projected";
       const jumper = pickJumper(starters, hist);
-      return { team, starters, jumper };
+      const tipGames = teamGames.filter((g) => g.tip);
+      const tipsWon = tipGames.filter((g) => g.tip!.winnerTeamId === team.id).length;
+      return { team, starters, jumper, tipsWon, tipGames: tipGames.length };
     });
 
     const [homeSide, awaySide] = sides;
@@ -431,6 +433,7 @@ export async function buildNBASnapshot(
           injuryStatus: status && !isOut(status) ? status : null,
           isJumper: id === side.jumper,
           gamesPlayed: h.gamesPlayed,
+          teamTipsWon: side.tipsWon, teamTipsGames: side.tipGames,
           tipsTaken: h.tipsTaken, tipsWon: h.tipsWon,
           firstGameShots: h.firstGameShots, firstTeamShots: h.firstTeamShots,
           firstGameBaskets: h.firstGameBaskets, firstTeamBaskets: h.firstTeamBaskets,
