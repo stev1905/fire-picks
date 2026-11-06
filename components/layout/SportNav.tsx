@@ -8,7 +8,7 @@ import { Construction } from "lucide-react";
 const SPORTS = [
   { label: "MLB", href: "/" },
   { label: "NHL", href: "/nhl" },
-  { label: "NBA", href: null },
+  { label: "NBA", href: "/nba" },
   { label: "NFL", href: "/nfl" },
 ];
 
@@ -22,6 +22,9 @@ function isRouteActive(label: string, pathname: string): boolean {
   }
   if (label === "NHL") {
     return pathname === "/nhl" || pathname.startsWith("/nhl/");
+  }
+  if (label === "NBA") {
+    return pathname === "/nba" || pathname.startsWith("/nba/");
   }
   if (label === "NFL") {
     return pathname === "/nfl" || pathname.startsWith("/nfl/");
