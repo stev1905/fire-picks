@@ -73,6 +73,61 @@ export interface NBADailySnapshot {
   tipWinnerScoresFirst: number;
   games: NBAGame[];
   players: NBAFirstBasketRow[];
+  props: NBAPropRow[];     // DraftKings milestone props in the Hot / Super Safe odds windows
+}
+
+// ── Player props ─────────────────────────────────────────────────────────────
+
+export type PropStat = "PTS" | "REB" | "AST" | "STL" | "BLK";
+
+export interface NBAPropRow {
+  key: string;            // athleteId-stat-threshold
+  category: "hot" | "safe";
+  athleteId: string;
+  name: string;
+  team: string;
+  opponent: string;
+  isHome: boolean;
+  gameId: string;
+  startTime: string;
+  injuryStatus: string | null;   // GTD etc.; Out players are dropped
+
+  stat: PropStat;
+  threshold: number;      // milestone N+ (e.g. 10 = "10+ points")
+  odds: number;           // DraftKings American odds
+  implied: number;        // book's implied probability (includes vig)
+
+  // Hit history, newest first (last 20 games, reaching into last season if needed)
+  last: number[];         // stat values, up to 20
+  prevSeasonGames: number;// how many of `last` came from last season
+  hitsL5: number;  nL5: number;
+  hitsL10: number; nL10: number;
+  hitsL20: number; nL20: number;
+  streak: number;         // consecutive hits, most recent game backwards
+  avgL10: number;
+  minL10: number;         // average minutes, last 10
+
+  modelProb: number;      // blended, shrunk hit rate
+  edge: number;           // modelProb − implied
+  hotScore: number;       // ranking for Hot Props (edge + streak)
+  reasons: string[];
+}
+
+export interface NBAGameLogEntry {
+  eventId: string;
+  date: string;
+  min: number;
+  pts: number;
+  reb: number;
+  ast: number;
+  stl: number;
+  blk: number;
+}
+
+// Last season's logs never change — cached under `nba-prevlogs-{season}`
+export interface NBAPrevLogsCache {
+  season: number;                              // the CURRENT season these were fetched for
+  logs: Record<string, NBAGameLogEntry[]>;     // athleteId → up to 20, newest first ([] = none)
 }
 
 // ── Cache (internal) ─────────────────────────────────────────────────────────

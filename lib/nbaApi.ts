@@ -6,9 +6,12 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- ESPN responses are untyped JSON */
 import type {
   NBADailySnapshot, NBAGame, NBAFirstBasketRow, NBAGameExtract, NBAGamePlayer, NBAPbpCache, NBATeamRef,
+  NBAPrevLogsCache,
 } from "@/types/nba";
+import { buildNBAProps } from "./nbaProps";
+import { getJson as getJsonT, mapLimit } from "./espnFetch";
 
-export const NBA_SCHEMA_VERSION = 2;
+export const NBA_SCHEMA_VERSION = 3;
 
 const ESPN = "https://site.api.espn.com/apis/site/v2/sports/basketball/nba";
 
@@ -30,33 +33,7 @@ export const SHARE_WEIGHTS = { firstShot: 0.4, firstBasket: 0.35, recent: 0.25 }
 // prob → 0–100 score (a 25% first-basket chance maps to 100)
 const SCORE_SCALE = 400;
 
-// ── Fetch helpers ───────────────────────────────────────────────────────────
-async function getJson<T = any>(url: string, tries = 3): Promise<T | null> {
-  for (let i = 0; i < tries; i++) {
-    try {
-      const res = await fetch(url, { cache: "no-store" });
-      if (res.ok) return (await res.json()) as T;
-      if (res.status === 404) return null;
-    } catch {
-      /* retry */
-    }
-    await new Promise((r) => setTimeout(r, 400 * (i + 1)));
-  }
-  return null;
-}
-
-async function mapLimit<T, R>(items: T[], limit: number, fn: (t: T) => Promise<R>): Promise<R[]> {
-  const out: R[] = new Array(items.length);
-  let next = 0;
-  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
-    while (next < items.length) {
-      const i = next++;
-      out[i] = await fn(items[i]);
-    }
-  });
-  await Promise.all(workers);
-  return out;
-}
+const getJson = (url: string) => getJsonT<any>(url);
 
 export function todayET(): string {
   return new Date().toLocaleDateString("en-CA", { timeZone: "America/New_York" });
@@ -330,8 +307,8 @@ function teamRef(c: any): NBATeamRef {
 }
 
 export async function buildNBASnapshot(
-  opts: { date?: string; cache?: NBAPbpCache | null } = {},
-): Promise<{ snapshot: NBADailySnapshot; cache: NBAPbpCache }> {
+  opts: { date?: string; cache?: NBAPbpCache | null; prevLogs?: NBAPrevLogsCache | null } = {},
+): Promise<{ snapshot: NBADailySnapshot; cache: NBAPbpCache; prevLogs: NBAPrevLogsCache }> {
   const date = opts.date ?? todayET();
   const season = seasonForDate(date);
   const cache: NBAPbpCache =
@@ -378,12 +355,14 @@ export async function buildNBASnapshot(
   const { tipWinnerScoresFirst, benchShare } = leagueRates(history);
 
   const players: NBAFirstBasketRow[] = [];
+  const allInjuries = new Map<string, string>();
   games.forEach((game, gi) => {
     const summary = todaySummaries[gi];
     const injuries = new Map<string, string>();
     for (const t of summary?.injuries ?? []) {
       for (const i of t.injuries ?? []) if (i.athlete?.id) injuries.set(String(i.athlete.id), i.status ?? "");
     }
+    for (const [k, v] of injuries) allInjuries.set(k, v);
     const live = game.status !== "STATUS_SCHEDULED" ? boxPlayers(summary) : [];
     // Players appearing only today (rookie debut, new signing) still need a name
     for (const p of live) {
@@ -448,6 +427,14 @@ export async function buildNBASnapshot(
 
   players.sort((a, b) => b.prob - a.prob);
 
+  const { props, prevLogs } = await buildNBAProps({
+    season, games,
+    names: new Map([...hist.values()].map((h) => [h.id, { name: h.name, teamId: h.lastTeamId }])),
+    injuries: allInjuries,
+    isOut,
+    prevLogs: opts.prevLogs ?? null,
+  });
+
   return {
     snapshot: {
       schemaVersion: NBA_SCHEMA_VERSION,
@@ -457,7 +444,9 @@ export async function buildNBASnapshot(
       tipWinnerScoresFirst,
       games,
       players,
+      props,
     },
     cache,
+    prevLogs,
   };
 }

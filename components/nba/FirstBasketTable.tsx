@@ -1,10 +1,11 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo } from "react";
 import type { NBADailySnapshot, NBAFirstBasketRow } from "@/types/nba";
+import { GameFilter, tipTime, type GameFilterState } from "./GameFilter";
 import { CollapsibleSection } from "@/components/analytics/CollapsibleSection";
 import {
-  FilterLabel, Toggle, SortHeader, TableShell, EmptyState, useTableSort,
+  SortHeader, TableShell, EmptyState, useTableSort,
 } from "@/components/nfl/ui";
 
 type SortKey =
@@ -14,9 +15,6 @@ const tipRate = (r: NBAFirstBasketRow) => (r.teamTipsGames ? r.teamTipsWon / r.t
 const shotPct = (r: NBAFirstBasketRow) => (r.gamesPlayed ? r.firstTeamShots / r.gamesPlayed : 0);
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
-function tipTime(utc: string): string {
-  return new Date(utc).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit", timeZone: "America/New_York" });
-}
 
 function fbClass(score: number): string {
   if (score >= 70) return "bg-orange-500 text-white";
@@ -34,21 +32,11 @@ function Count({ n, of }: { n: number; of?: number }) {
   );
 }
 
-export function FirstBasketTable({ snapshot }: { snapshot: NBADailySnapshot }) {
+export function FirstBasketTable({ snapshot, filter }: { snapshot: NBADailySnapshot; filter: GameFilterState }) {
   const { games, players } = snapshot;
-  // Empty = every game
-  const [selected, setSelected] = useState<Set<string>>(new Set());
-  const toggleGame = (id: string) =>
-    setSelected((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id); else next.add(id);
-      return next;
-    });
-  const [hideStarted, setHideStarted] = useState(true);
   const sort = useTableSort<SortKey>("score");
 
   const gameById = useMemo(() => new Map(games.map((g) => [g.id, g])), [games]);
-  const anyStarted = games.some((g) => g.status !== "STATUS_SCHEDULED");
 
   const rows = useMemo(() => {
     const val = (r: NBAFirstBasketRow): number | string => {
@@ -72,10 +60,9 @@ export function FirstBasketTable({ snapshot }: { snapshot: NBADailySnapshot }) {
     };
     return players
       .filter((r) =>
-        (selected.size === 0 || selected.has(r.gameId)) &&
-        !(hideStarted && gameById.get(r.gameId)?.status !== "STATUS_SCHEDULED"))
+        filter.matches(r.gameId))
       .sort(cmp);
-  }, [players, selected, hideStarted, sort.key, sort.dir, gameById]);
+  }, [players, filter, sort.key, sort.dir]);
 
   const H = (label: string, col: SortKey, title?: string, className?: string) => (
     <SortHeader label={label} col={col} current={sort.key} dir={sort.dir} onSort={sort.onSort} title={title} className={className} />
@@ -95,29 +82,7 @@ export function FirstBasketTable({ snapshot }: { snapshot: NBADailySnapshot }) {
         </div>
       </CollapsibleSection>
 
-      <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-        <FilterLabel>Games</FilterLabel>
-        {games.map((g) => (
-          <label
-            key={g.id}
-            className={`flex items-center gap-1.5 text-xs px-2 py-1 rounded-lg border cursor-pointer select-none transition-colors ${
-              selected.has(g.id)
-                ? "border-orange-500 bg-orange-500/10 text-foreground"
-                : "border-border bg-muted text-muted-foreground hover:text-foreground"
-            }`}
-          >
-            <input type="checkbox" checked={selected.has(g.id)} onChange={() => toggleGame(g.id)} className="accent-orange-500" />
-            <span className="font-semibold">{g.away.abbr} @ {g.home.abbr}</span>
-            <span className="tabular-nums opacity-70">{tipTime(g.startTime)}</span>
-          </label>
-        ))}
-        {selected.size > 0 && (
-          <button type="button" onClick={() => setSelected(new Set())} className="text-xs text-muted-foreground hover:text-foreground underline">
-            Clear ({selected.size})
-          </button>
-        )}
-        {anyStarted && <Toggle checked={hideStarted} onChange={setHideStarted} label="Hide started games" />}
-      </div>
+      <GameFilter games={games} filter={filter} />
 
       {rows.length === 0 ? (
         <EmptyState>{players.length === 0 ? "No NBA games today." : "No starters match these filters."}</EmptyState>

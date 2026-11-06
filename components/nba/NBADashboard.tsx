@@ -3,16 +3,21 @@
 import { useState } from "react";
 import type { NBADailySnapshot } from "@/types/nba";
 import { FirstBasketTable } from "./FirstBasketTable";
+import { PropsTable } from "./PropsTable";
+import { useGameFilter } from "./GameFilter";
 import { timeAgo } from "@/components/nfl/ui";
 
 const TABS = [
   { key: "firstBasket", label: "First Basket" },
+  { key: "hot",         label: "Hot Props" },
+  { key: "safe",        label: "Super Safe Picks" },
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
 
 export function NBADashboard({ snapshot }: { snapshot: NBADailySnapshot }) {
   const [tab, setTab] = useState<TabKey>("firstBasket");
   const s = snapshot;
+  const filter = useGameFilter(s.games);   // shared, so picked games carry across tabs
   const day = new Date(`${s.date}T12:00:00`).toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
 
   return (
@@ -41,11 +46,18 @@ export function NBADashboard({ snapshot }: { snapshot: NBADailySnapshot }) {
             }`}
           >
             {t.label}
+            {t.key !== "firstBasket" && (
+              <span className="ml-1.5 text-[10px] font-bold text-muted-foreground tabular-nums">
+                {s.props.filter((p) => p.category === t.key).length}
+              </span>
+            )}
           </button>
         ))}
       </div>
 
-      {tab === "firstBasket" && <FirstBasketTable snapshot={s} />}
+      {tab === "firstBasket" && <FirstBasketTable snapshot={s} filter={filter} />}
+      {tab === "hot"         && <PropsTable mode="hot" props={s.props} games={s.games} filter={filter} />}
+      {tab === "safe"        && <PropsTable mode="safe" props={s.props} games={s.games} filter={filter} />}
     </div>
   );
 }
