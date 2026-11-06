@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import type { NFLDailySnapshot } from "@/types/nfl";
 import { ChefLoading } from "@/components/ChefLoading";
 import { NFLDashboard } from "@/components/nfl/NFLDashboard";
+import { NFL_SCHEMA_VERSION } from "@/lib/nflModel";
 
 async function getSnapshot(): Promise<NFLDailySnapshot | null> {
   try {
@@ -24,6 +25,11 @@ export default async function NFLPage() {
 
   if (!snapshot) {
     return <ChefLoading message="Chefing up this week's NFL slate..." />;
+  }
+
+  // Data synced by an older deploy has a different shape — wait for the next sync rather than crash
+  if (snapshot.schemaVersion !== NFL_SCHEMA_VERSION) {
+    return <ChefLoading message="Updating NFL data to the latest format — check back in a few minutes..." />;
   }
 
   return <NFLDashboard snapshot={snapshot} />;

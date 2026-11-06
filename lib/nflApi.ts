@@ -16,7 +16,7 @@ import type {
 import {
   type StatRow, normalizePos, classifyWR, buildDefenseVsPosition, shrunkYardsEdge,
   shrunkTdFactor, weatherImpact, unitForPosition, availabilityMult, tdModel,
-  finalizeTeamTDs, matchupScoreFromEdge, parseReporter,
+  finalizeTeamTDs, matchupScoreFromEdge, parseReporter, NFL_SCHEMA_VERSION,
 } from "./nflModel";
 import { describeCode } from "./weather";
 import {
@@ -839,6 +839,7 @@ export async function buildNFLSnapshot(opts: { week?: number } = {}): Promise<NF
     playing.has(i.team) && (["QB", "RB", "WR", "TE", "OL"].includes(i.unit) || i.isStarter || i.isRegularStarter));
 
   return {
+    schemaVersion: NFL_SCHEMA_VERSION,
     season,
     week,
     syncedAt: new Date().toISOString(),

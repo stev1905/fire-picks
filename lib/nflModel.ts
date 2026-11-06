@@ -19,6 +19,10 @@ export const DVP_LABELS: Record<DvpCategory, string> = {
   QB_PASS:     "QB Pass",
 };
 
+// Bump whenever the snapshot shape changes. The page won't render a snapshot
+// written by older sync code (it would crash on missing fields) — it waits for a re-sync.
+export const NFL_SCHEMA_VERSION = 2;
+
 // ── Tunables ────────────────────────────────────────────────────────────────
 // Early-season stats are noisy: shrink defense splits toward league average.
 // weight = games / (games + K). With 2 games, yards get 50% weight, TDs 20%.

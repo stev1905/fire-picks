@@ -17,6 +17,7 @@ export type DvpCategory =
   | "QB_PASS";
 
 export interface NFLDailySnapshot {
+  schemaVersion: number;       // see NFL_SCHEMA_VERSION in lib/nflModel.ts
   season: number;
   week: number;
   syncedAt: string;
