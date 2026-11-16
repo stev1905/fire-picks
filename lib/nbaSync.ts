@@ -1,5 +1,5 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
-import type { NBAPbpCache, NBAPrevLogsCache } from "@/types/nba";
+import type { NBADailySnapshot, NBAPbpCache, NBAPrevLogsCache } from "@/types/nba";
 import { buildNBASnapshot, seasonForDate, todayET } from "./nbaApi";
 
 // Shared by the scheduled Netlify function and the manual /api/sync/nba route.
@@ -10,14 +10,16 @@ export async function syncNBA(db: SupabaseClient, date = todayET()) {
   const cacheKey = `nba-pbp-${season}`;
   const prevKey = `nba-prevlogs-${season}`;
 
-  const [{ data: cached }, { data: prevCached }] = await Promise.all([
+  const [{ data: cached }, { data: prevCached }, { data: previous }] = await Promise.all([
     db.from("snapshots").select("data").eq("date", cacheKey).maybeSingle(),
     db.from("snapshots").select("data").eq("date", prevKey).maybeSingle(),
+    db.from("snapshots").select("data").eq("date", `nba-${date}`).maybeSingle(),
   ]);
   const { snapshot, cache, prevLogs } = await buildNBASnapshot({
     date,
     cache: (cached?.data as NBAPbpCache) ?? null,
     prevLogs: (prevCached?.data as NBAPrevLogsCache) ?? null,
+    previous: (previous?.data as NBADailySnapshot) ?? null,
   });
 
   const syncedAt = new Date().toISOString();

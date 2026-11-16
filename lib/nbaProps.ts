@@ -5,7 +5,7 @@
 // (cached; it never changes) until there are 20 games.
 /* eslint-disable @typescript-eslint/no-explicit-any -- ESPN responses are untyped JSON */
 import type {
-  NBAGame, NBAGameLogEntry, NBAPrevLogsCache, NBAPropRow, PropStat,
+  NBAFirstBasketOdds, NBAGame, NBAGameLogEntry, NBAPrevLogsCache, NBAPropRow, PropStat,
 } from "@/types/nba";
 import { getJson, mapLimit } from "./espnFetch";
 
@@ -62,30 +62,54 @@ function parseOdds(v: unknown): number | null {
 
 const impliedProb = (o: number) => (o < 0 ? -o / (-o + 100) : 100 / (o + 100));
 
-async function fetchGameProps(gameId: string): Promise<RawProp[]> {
+// Every DraftKings prop item for a game, all pages
+async function fetchPropItems(gameId: string): Promise<any[]> {
   const base = `${CORE}/events/${gameId}/competitions/${gameId}/odds/${DRAFTKINGS}/propBets?lang=en&region=us&limit=1000`;
   const first = await getJson<any>(base);
   if (!first) return [];
   const pages = [first];
   const extra = Array.from({ length: Math.max(0, (first.pageCount ?? 1) - 1) }, (_, i) => i + 2);
   pages.push(...(await mapLimit(extra, 3, (p) => getJson<any>(`${base}&page=${p}`))).filter(Boolean));
+  return pages.flatMap((p) => p.items ?? []);
+}
 
+// DraftKings first-basket markets (player prices; pulled at tip like other pregame props)
+const FIRST_BASKET_MARKETS: Record<string, "first" | "teamFirst"> = {
+  "First Basket": "first",
+  "1st Team FG Scorer": "teamFirst",
+};
+
+function parseFirstBasketOdds(items: any[]): Map<string, NBAFirstBasketOdds> {
+  const out = new Map<string, NBAFirstBasketOdds>();
+  for (const it of items) {
+    const field = FIRST_BASKET_MARKETS[it.type?.name];
+    if (!field) continue;
+    const athleteId = refId(it.athlete?.$ref, "athletes");
+    const odds = parseOdds(it.odds?.american?.value);
+    if (!athleteId || odds === null) continue;
+    const o = out.get(athleteId) ?? { first: null, teamFirst: null, updated: "" };
+    o[field] = odds;
+    if ((it.lastUpdated ?? "") > o.updated) o.updated = it.lastUpdated;
+    out.set(athleteId, o);
+  }
+  return out;
+}
+
+function parseMilestones(items: any[]): RawProp[] {
   // Rungs per athlete + stat, in feed order
   const groups = new Map<string, RawProp[]>();
-  for (const page of pages) {
-    for (const it of page.items ?? []) {
-      const stat = MARKETS[it.type?.name];
-      if (!stat) continue;
-      const athleteId = refId(it.athlete?.$ref, "athletes");
-      const threshold = Number(it.current?.target?.value);
-      const odds = parseOdds(it.odds?.american?.value);
-      if (!athleteId || !Number.isFinite(threshold) || odds === null) continue;
-      const key = `${athleteId}-${stat}`;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push({
-        athleteId, teamId: refId(it.team?.$ref, "teams"), stat, threshold, odds, updated: it.lastUpdated ?? "",
-      });
-    }
+  for (const it of items) {
+    const stat = MARKETS[it.type?.name];
+    if (!stat) continue;
+    const athleteId = refId(it.athlete?.$ref, "athletes");
+    const threshold = Number(it.current?.target?.value);
+    const odds = parseOdds(it.odds?.american?.value);
+    if (!athleteId || !Number.isFinite(threshold) || odds === null) continue;
+    const key = `${athleteId}-${stat}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key)!.push({
+      athleteId, teamId: refId(it.team?.$ref, "teams"), stat, threshold, odds, updated: it.lastUpdated ?? "",
+    });
   }
   return [...groups.values()].flatMap(resolveLadder);
 }
@@ -173,7 +197,11 @@ export interface PropsContext {
   prevLogs: NBAPrevLogsCache | null;
 }
 
-export async function buildNBAProps(ctx: PropsContext): Promise<{ props: NBAPropRow[]; prevLogs: NBAPrevLogsCache }> {
+export async function buildNBAProps(ctx: PropsContext): Promise<{
+  props: NBAPropRow[];
+  prevLogs: NBAPrevLogsCache;
+  firstBasketOdds: Map<string, NBAFirstBasketOdds>;   // `${gameId}-${athleteId}`
+}> {
   const { season, games } = ctx;
   const prevLogs: NBAPrevLogsCache =
     ctx.prevLogs && ctx.prevLogs.season === season ? ctx.prevLogs : { season, logs: {} };
@@ -181,7 +209,14 @@ export async function buildNBAProps(ctx: PropsContext): Promise<{ props: NBAProp
 
   // Lines for games that haven't tipped (books pull pregame props at tip)
   const open = games.filter((g) => g.status === "STATUS_SCHEDULED");
-  const perGame = await mapLimit(open, 4, async (g) => ({ game: g, props: await fetchGameProps(g.id) }));
+  const perGame = await mapLimit(open, 4, async (g) => {
+    const items = await fetchPropItems(g.id);
+    return { game: g, props: parseMilestones(items), firstBasket: parseFirstBasketOdds(items) };
+  });
+  const firstBasketOdds = new Map<string, NBAFirstBasketOdds>();
+  for (const { game, firstBasket } of perGame) {
+    for (const [athleteId, o] of firstBasket) firstBasketOdds.set(`${game.id}-${athleteId}`, o);
+  }
 
   const inWindow = (o: number) =>
     (o >= HOT_ODDS.min && o <= HOT_ODDS.max) || (o >= SAFE_ODDS.min && o <= SAFE_ODDS.max);
@@ -280,5 +315,5 @@ export async function buildNBAProps(ctx: PropsContext): Promise<{ props: NBAProp
   const props = [...best.values()]
     .filter((r) => r.name !== "Unknown")
     .sort((a, b) => b.hotScore - a.hotScore);
-  return { props, prevLogs };
+  return { props, prevLogs, firstBasketOdds };
 }

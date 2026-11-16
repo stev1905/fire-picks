@@ -9,9 +9,13 @@ import {
 } from "@/components/nfl/ui";
 
 type SortKey =
-  | "team" | "player" | "time" | "tip" | "gameShot" | "teamShot" | "shotPct" | "basket" | "l5" | "score";
+  | "team" | "player" | "time" | "tip" | "gameShot" | "teamShot" | "shotPct" | "basket" | "l5" | "score" | "edge";
 
 const tipRate = (r: NBAFirstBasketRow) => (r.teamTipsGames ? r.teamTipsWon / r.teamTipsGames : -1);
+const implied = (o: number) => (o < 0 ? -o / (-o + 100) : 100 / (o + 100));
+// Model probability minus DraftKings' implied probability (which includes the book's margin)
+const edgeOf = (r: NBAFirstBasketRow) => (r.book?.first != null ? r.prob - implied(r.book.first) : null);
+const fmtOdds = (o: number) => (o > 0 ? `+${o}` : `${o}`);
 const shotPct = (r: NBAFirstBasketRow) => (r.gamesPlayed ? r.firstTeamShots / r.gamesPlayed : 0);
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
@@ -51,6 +55,7 @@ export function FirstBasketTable({ snapshot, filter }: { snapshot: NBADailySnaps
         case "basket":   return r.firstGameBaskets * 100 + r.firstTeamBaskets;
         case "l5":       return r.firstBasketsL5;
         case "score":    return r.prob;
+        case "edge":     return edgeOf(r) ?? -1;
       }
     };
     const cmp = (a: NBAFirstBasketRow, b: NBAFirstBasketRow) => {
@@ -78,6 +83,7 @@ export function FirstBasketTable({ snapshot, filter }: { snapshot: NBADailySnaps
           <p><b className="text-foreground">2. Team scores first.</b> This season, the team that wins the tip has made the first field goal in <b className="text-foreground">{pct(snapshot.tipWinnerScoresFirst)}</b> of games (blended with a 57% prior). So P(team first) = P(win tip) × {pct(snapshot.tipWinnerScoresFirst)} + P(lose tip) × {pct(1 - snapshot.tipWinnerScoresFirst)}.</p>
           <p><b className="text-foreground">3. Player share.</b> This is his chance of making his team&apos;s first field goal, based on shot volume: his field-goal attempts per start with this team, square-rooted, as a share of the starting five. The square root keeps high-volume scorers ahead without letting them run away with it. In a backtest of this season, past first-shot and first-basket counts and last-5 form predicted <i>worse</i> than shot volume alone, so they&apos;re shown in the table for context but aren&apos;t in the score.</p>
           <p><b className="text-foreground">4. Score.</b> P(first basket) = P(team first) × player share. The score is that probability ×4 (25% = 100). Fair odds are no-vig, so compare them to your book.</p>
+          <p><b className="text-foreground">DK Odds.</b> DraftKings&apos; First Basket price and the model&apos;s edge in percentage points (model probability minus the book&apos;s implied probability, which includes its margin). Books pull the market at tip, so the last pregame price stays on the row. Check your book&apos;s settlement rules: the model counts made field goals only.</p>
           <p><b className="text-foreground">Starters.</b> These are <i>projected</i> from each team&apos;s last game, with anyone ruled Out replaced by the next most frequent starter. They switch to <i>confirmed</i> once the box score lists them at tip-off. GTD players are flagged.</p>
         </div>
       </CollapsibleSection>
@@ -101,6 +107,7 @@ export function FirstBasketTable({ snapshot, filter }: { snapshot: NBADailySnaps
                 {H("1st Basket", "basket", "Games he made the first field goal of the game (and his team's first)")}
                 {H("1st Basket L5", "l5", "First field goal of the game in his last 5 games")}
                 {H("FB Score", "score", "First basket score (probability × 4) with fair odds")}
+                {H("DK Odds", "edge", "DraftKings First Basket price, and the model's edge over it (green = model rates him above the book's price). Last pregame price is kept after tip.")}
               </tr>
             </thead>
             <tbody className="divide-y divide-border">
@@ -165,6 +172,22 @@ export function FirstBasketTable({ snapshot, filter }: { snapshot: NBADailySnaps
                       <div className="text-[10px] text-muted-foreground tabular-nums" title="P(team makes first FG) · P(he makes team's first FG)">
                         team {pct(r.pTeamFirst)} · share {pct(r.teamShare)}
                       </div>
+                    </td>
+                    <td className="px-2.5 py-1.5 whitespace-nowrap tabular-nums">
+                      {r.book?.first != null ? (() => {
+                        const e = edgeOf(r)!;
+                        return (
+                          <>
+                            <div className="text-[12px] font-semibold">{fmtOdds(r.book.first)}</div>
+                            <div className={`text-[10px] font-semibold ${e > 0 ? "text-green-600 dark:text-green-400" : "text-muted-foreground"}`}>
+                              {e > 0 ? "+" : ""}{(e * 100).toFixed(1)} pts
+                            </div>
+                            {r.book.teamFirst != null && (
+                              <div className="text-[10px] text-muted-foreground" title="DraftKings 1st Team FG Scorer">team 1st {fmtOdds(r.book.teamFirst)}</div>
+                            )}
+                          </>
+                        );
+                      })() : <span className="text-muted-foreground text-[12px]">—</span>}
                     </td>
                   </tr>
                 );

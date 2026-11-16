@@ -61,6 +61,16 @@ export interface NBAFirstBasketRow {
   prob: number;         // pTeamFirst × teamShare
   score: number;        // 0–100 scale of prob
   fairOdds: string;     // no-vig American odds from prob
+
+  // DraftKings prices (optional: absent in snapshots synced before odds capture).
+  // Books pull these at tip, so the last pregame price is carried forward all day.
+  book?: NBAFirstBasketOdds | null;
+}
+
+export interface NBAFirstBasketOdds {
+  first: number | null;       // "First Basket" (American)
+  teamFirst: number | null;   // "1st Team FG Scorer" (American)
+  updated: string;            // ISO, DraftKings lastUpdated
 }
 
 export interface NBADailySnapshot {

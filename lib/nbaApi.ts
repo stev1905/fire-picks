@@ -6,7 +6,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any -- ESPN responses are untyped JSON */
 import type {
   NBADailySnapshot, NBAGame, NBAFirstBasketRow, NBAGameExtract, NBAGamePlayer, NBAPbpCache, NBATeamRef,
-  NBAPrevLogsCache,
+  NBAPrevLogsCache, NBAFirstBasketOdds,
 } from "@/types/nba";
 import { buildNBAProps } from "./nbaProps";
 import { getJson as getJsonT, mapLimit } from "./espnFetch";
@@ -338,7 +338,12 @@ function teamRef(c: any): NBATeamRef {
 }
 
 export async function buildNBASnapshot(
-  opts: { date?: string; cache?: NBAPbpCache | null; prevLogs?: NBAPrevLogsCache | null } = {},
+  opts: {
+    date?: string;
+    cache?: NBAPbpCache | null;
+    prevLogs?: NBAPrevLogsCache | null;
+    previous?: NBADailySnapshot | null;   // this date's last snapshot — source of pregame odds after tip
+  } = {},
 ): Promise<{ snapshot: NBADailySnapshot; cache: NBAPbpCache; prevLogs: NBAPrevLogsCache }> {
   const date = opts.date ?? todayET();
   const season = seasonForDate(date);
@@ -458,13 +463,24 @@ export async function buildNBASnapshot(
 
   players.sort((a, b) => b.prob - a.prob);
 
-  const { props, prevLogs } = await buildNBAProps({
+  const { props, prevLogs, firstBasketOdds } = await buildNBAProps({
     season, games,
     names: new Map([...hist.values()].map((h) => [h.id, { name: h.name, teamId: h.lastTeamId }])),
     injuries: allInjuries,
     isOut,
     prevLogs: opts.prevLogs ?? null,
   });
+
+  // DraftKings first-basket prices. Once a game tips the market is gone, so keep the
+  // last price captured pregame (stored in this date's previous snapshot).
+  const prevBook = new Map<string, NBAFirstBasketOdds>();
+  if (opts.previous?.date === date) {
+    for (const r of opts.previous.players) if (r.book) prevBook.set(`${r.gameId}-${r.id}`, r.book);
+  }
+  for (const r of players) {
+    const key = `${r.gameId}-${r.id}`;
+    r.book = firstBasketOdds.get(key) ?? prevBook.get(key) ?? null;
+  }
 
   return {
     snapshot: {
