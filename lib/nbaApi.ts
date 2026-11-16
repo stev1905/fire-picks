@@ -22,14 +22,22 @@ const TIP_PRIOR_TIPS = 4;
 // observed league rate this season (prior counts as this many games)
 const TIP_WINNER_FIRST_PRIOR = 0.57;
 const TIP_WINNER_FIRST_PRIOR_N = 40;
-// Share of a team's first FG made by a non-starter (prior + phantom games)
-const BENCH_SHARE_PRIOR = 0.03;
+// Share of a team's first FG made by a non-starter (prior + phantom games).
+// Backtest Oct 20 – Nov 15 2026: 0 of 384 team-first FGs came off the bench.
+const BENCH_SHARE_PRIOR = 0.005;
 const BENCH_SHARE_PRIOR_N = 100;
+// Player share baseline: his FGA per game ^ this power, normalised over the five.
+// 0.5 (square root) beat 1 (raw FGA share) and 0 (equal split) in the backtest:
+// high-volume scorers take more first shots, but less than proportionally.
+const FGA_SHARE_POWER = 0.5;
 // Player share: counts are shrunk toward his FGA share with this many phantom starts
 const SHARE_PRIOR_STARTS = 5;
 const RECENT_PRIOR_STARTS = 2;
-// Blend of the three share estimates (sum = 1)
-export const SHARE_WEIGHTS = { firstShot: 0.4, firstBasket: 0.35, recent: 0.25 } as const;
+// Blend of the share estimates (sum = 1). Backtest (walk-forward, 192 games through
+// Nov 15 2026): first-shot, first-basket and last-5 history each scored WORSE than
+// the FGA baseline alone — at ~10 starts per player they're mostly noise. Kept at 0
+// so they can be re-tested as samples grow.
+export const SHARE_WEIGHTS = { fgaShare: 1, firstShot: 0, firstBasket: 0, recent: 0 } as const;
 // prob → 0–100 score (a 25% first-basket chance maps to 100)
 const SCORE_SCALE = 400;
 
@@ -142,6 +150,7 @@ interface PlayerHistory {
   lastTeamId: string;
   lastDate: string;
   gamesPlayed: number;
+  fgaTotal: number;   // all games, bench included — FGA baseline for players without starts
   tipsTaken: number;
   tipsWon: number;
   firstGameShots: number;
@@ -162,12 +171,13 @@ function buildHistories(games: NBAGameExtract[]): Map<string, PlayerHistory> {
       if (!h) {
         h = {
           id: p.id, name: p.name, pos: p.pos, lastTeamId: p.teamId, lastDate: g.date,
-          gamesPlayed: 0, tipsTaken: 0, tipsWon: 0, firstGameShots: 0, firstTeamShots: 0,
+          gamesPlayed: 0, fgaTotal: 0, tipsTaken: 0, tipsWon: 0, firstGameShots: 0, firstTeamShots: 0,
           firstGameBaskets: 0, firstTeamBaskets: 0, recent: [], starts: [],
         };
         hist.set(p.id, h);
       }
       h.gamesPlayed++;
+      h.fgaTotal += p.fga;
       if (g.tip?.jumpers.includes(p.id)) {
         h.tipsTaken++;
         if (g.tip.winnerTeamId === p.teamId) h.tipsWon++;
@@ -288,15 +298,17 @@ function teamShares(starters: string[], teamId: string, hist: Map<string, Player
     const h = hist.get(id);
     const starts = (h?.starts ?? []).filter((s) => s.teamId === teamId);
     const all = starts.length ? starts : h?.starts ?? [];
+    // No starts yet (spot starter, debut): use his per-game FGA off the bench, or a low default
     const fgaPer = all.length
       ? all.reduce((s, x) => s + x.fga, 0) / all.length
-      : h && h.gamesPlayed ? 8 : 6;
+      : h && h.gamesPlayed ? h.fgaTotal / h.gamesPlayed : 6;
     return { id, starts: all, fgaPer };
   });
-  const fgaTotal = rows.reduce((s, r) => s + r.fgaPer, 0) || 1;
+  const weightOf = (fgaPer: number) => Math.max(fgaPer, 0.5) ** FGA_SHARE_POWER;
+  const fgaTotal = rows.reduce((s, r) => s + weightOf(r.fgaPer), 0) || 1;
 
   const raw = rows.map((r) => {
-    const prior = r.fgaPer / fgaTotal;   // his slice of the five's shot volume
+    const prior = weightOf(r.fgaPer) / fgaTotal;   // his (dampened) slice of the five's shot volume
     const n = r.starts.length;
     const fs = r.starts.filter((s) => s.teamFirstShot).length;
     const fb = r.starts.filter((s) => s.teamFirstFG).length;
@@ -307,7 +319,8 @@ function teamShares(starters: string[], teamId: string, hist: Map<string, Player
     const recent = (rec + RECENT_PRIOR_STARTS * prior) / (last5.length + RECENT_PRIOR_STARTS);
     return {
       id: r.id,
-      v: SHARE_WEIGHTS.firstShot * shot + SHARE_WEIGHTS.firstBasket * make + SHARE_WEIGHTS.recent * recent,
+      v: SHARE_WEIGHTS.fgaShare * prior + SHARE_WEIGHTS.firstShot * shot
+        + SHARE_WEIGHTS.firstBasket * make + SHARE_WEIGHTS.recent * recent,
     };
   });
   const sum = raw.reduce((s, r) => s + r.v, 0) || 1;
@@ -387,7 +400,7 @@ export async function buildNBASnapshot(
       if (!hist.has(p.id)) {
         hist.set(p.id, {
           id: p.id, name: p.name, pos: p.pos, lastTeamId: p.teamId, lastDate: game.startTime,
-          gamesPlayed: 0, tipsTaken: 0, tipsWon: 0, firstGameShots: 0, firstTeamShots: 0,
+          gamesPlayed: 0, fgaTotal: 0, tipsTaken: 0, tipsWon: 0, firstGameShots: 0, firstTeamShots: 0,
           firstGameBaskets: 0, firstTeamBaskets: 0, recent: [], starts: [],
         });
       }
