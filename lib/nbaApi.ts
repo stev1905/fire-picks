@@ -23,7 +23,7 @@ const TIP_PRIOR_TIPS = 4;
 const TIP_WINNER_FIRST_PRIOR = 0.57;
 const TIP_WINNER_FIRST_PRIOR_N = 40;
 // Share of a team's first FG made by a non-starter (prior + phantom games).
-// Backtest Oct 20 – Nov 15 2026: 0 of 384 team-first FGs came off the bench.
+// Backtest Oct 20 – Nov 15 2026: 4 of 384 team-first FGs (1%) came off the bench.
 const BENCH_SHARE_PRIOR = 0.005;
 const BENCH_SHARE_PRIOR_N = 100;
 // Player share baseline: his FGA per game ^ this power, normalised over the five.
